@@ -35,9 +35,11 @@ func NewRootCmd(version string) *cobra.Command {
 	rootCmd.AddCommand(newWhoamiCmd())
 	rootCmd.AddCommand(newAppsCmd())
 	rootCmd.AddCommand(newDeployCmd())
+	rootCmd.AddCommand(newPullCmd())
 	rootCmd.AddCommand(newLogsCmd())
 	rootCmd.AddCommand(newEnvCmd())
 	rootCmd.AddCommand(newInitCmd())
+	rootCmd.AddCommand(newMCPCmd(version))
 
 	rootCmd.Version = version
 

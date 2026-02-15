@@ -307,6 +307,39 @@ func (c *Client) Deploy(slug string, tarball io.Reader, filename string) (*Deplo
 	return &deployResp, nil
 }
 
+// --- Download ---
+
+// DownloadApp downloads the deployed code for an app as a gzipped tar stream.
+// The caller is responsible for closing the returned ReadCloser.
+func (c *Client) DownloadApp(slug string) (io.ReadCloser, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/apps/"+slug+"/download", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/gzip")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		if err := json.Unmarshal(body, apiErr); err != nil {
+			apiErr.Message = string(body)
+		}
+		return nil, apiErr
+	}
+
+	return resp.Body, nil
+}
+
 // --- Logs ---
 
 type LogEntry struct {

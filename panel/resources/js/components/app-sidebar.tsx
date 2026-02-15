@@ -28,7 +28,7 @@ const mainNavItems: NavItem[] = [
 const footerNavItems: NavItem[] = [
     {
         title: 'Documentation',
-        url: 'https://laravel.com/docs',
+        url: '/docs',
         icon: BookOpen,
     },
 ];

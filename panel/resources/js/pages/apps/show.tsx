@@ -61,8 +61,10 @@ function formatDuration(seconds: number): string {
     return seconds.toFixed(2) + 's';
 }
 
-// Simple bar chart using SVG
+// Simple bar chart using SVG with hover tooltip
 function MetricsChart({ metrics }: { metrics: RequestMetric[] }) {
+    const [hovered, setHovered] = useState<{ metric: RequestMetric; x: number; y: number } | null>(null);
+
     if (metrics.length === 0) {
         return <p className="text-muted-foreground py-8 text-center text-sm">No data yet</p>;
     }
@@ -70,26 +72,41 @@ function MetricsChart({ metrics }: { metrics: RequestMetric[] }) {
     const maxRequests = Math.max(...metrics.map((m) => m.requests), 1);
     const chartHeight = 160;
     const barWidth = Math.max(4, Math.min(20, Math.floor(600 / metrics.length) - 2));
+    const chartWidth = Math.max(600, metrics.length * (barWidth + 2));
+
+    // Show 3-5 evenly spaced axis labels
+    const labelCount = Math.min(5, metrics.length);
+    const labelStep = Math.max(1, Math.floor((metrics.length - 1) / (labelCount - 1)));
 
     return (
-        <div className="overflow-x-auto">
-            <svg width={Math.max(600, metrics.length * (barWidth + 2))} height={chartHeight + 30} className="w-full">
+        <div className="relative overflow-x-auto" onMouseLeave={() => setHovered(null)}>
+            <svg width={chartWidth} height={chartHeight + 28} className="w-full">
                 {metrics.map((m, i) => {
                     const height = (m.requests / maxRequests) * chartHeight;
                     const x = i * (barWidth + 2);
                     const errorHeight = ((m.status_4xx + m.status_5xx) / maxRequests) * chartHeight;
 
                     return (
-                        <g key={m.id}>
-                            <title>
-                                {new Date(m.period).toLocaleString()}: {m.requests} requests
-                            </title>
+                        <g
+                            key={m.id}
+                            onMouseEnter={(e) => {
+                                const rect = e.currentTarget.closest('svg')!.getBoundingClientRect();
+                                setHovered({ metric: m, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                            }}
+                            onMouseMove={(e) => {
+                                const rect = e.currentTarget.closest('svg')!.getBoundingClientRect();
+                                setHovered({ metric: m, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                            }}
+                            className="cursor-crosshair"
+                        >
+                            {/* Invisible hit area for easier hover */}
+                            <rect x={x} y={0} width={barWidth + 2} height={chartHeight} fill="transparent" />
                             <rect
                                 x={x}
                                 y={chartHeight - height}
                                 width={barWidth}
                                 height={height}
-                                className="fill-primary/70"
+                                className={hovered?.metric.id === m.id ? 'fill-primary' : 'fill-primary/70'}
                                 rx={1}
                             />
                             {errorHeight > 0 && (
@@ -105,19 +122,35 @@ function MetricsChart({ metrics }: { metrics: RequestMetric[] }) {
                         </g>
                     );
                 })}
-                {/* X-axis labels — show a few timestamps */}
-                {metrics
-                    .filter((_, i) => i % Math.max(1, Math.floor(metrics.length / 6)) === 0)
-                    .map((m, i, arr) => {
-                        const idx = metrics.indexOf(m);
-                        const x = idx * (barWidth + 2);
-                        return (
-                            <text key={i} x={x} y={chartHeight + 16} className="fill-muted-foreground text-[10px]">
-                                {new Date(m.period).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric' })}
-                            </text>
-                        );
-                    })}
+                {/* X-axis: sparse labels */}
+                {Array.from({ length: labelCount }, (_, i) => {
+                    const idx = i === labelCount - 1 ? metrics.length - 1 : i * labelStep;
+                    const m = metrics[idx];
+                    if (!m) return null;
+                    const x = idx * (barWidth + 2);
+                    const d = new Date(m.period);
+                    return (
+                        <text key={idx} x={x} y={chartHeight + 18} className="fill-muted-foreground" style={{ fontSize: 10 }}>
+                            {d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </text>
+                    );
+                })}
             </svg>
+            {/* Floating tooltip */}
+            {hovered && (
+                <div
+                    className="bg-popover text-popover-foreground pointer-events-none absolute z-10 rounded-md border px-3 py-1.5 shadow-md"
+                    style={{ left: Math.min(hovered.x, chartWidth - 180), top: Math.max(0, hovered.y - 48) }}
+                >
+                    <p className="text-xs font-medium">{new Date(hovered.metric.period).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
+                    <p className="text-muted-foreground text-xs">
+                        {hovered.metric.requests.toLocaleString()} requests
+                        {hovered.metric.status_4xx + hovered.metric.status_5xx > 0 && (
+                            <span className="text-red-500"> ({hovered.metric.status_4xx + hovered.metric.status_5xx} errors)</span>
+                        )}
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

@@ -12,6 +12,10 @@ Route::get('/', function () {
     return Inertia::render('welcome');
 })->name('home');
 
+Route::get('/docs', function () {
+    return Inertia::render('docs');
+})->name('docs');
+
 Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 

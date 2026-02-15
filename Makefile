@@ -1,4 +1,4 @@
-.PHONY: build deploy setup rootfs test-vm benchmark validate clean
+.PHONY: build deploy setup rootfs test-vm benchmark validate clean cli cli-install
 
 # Build the VM manager binary (cross-compile for Linux amd64)
 build:
@@ -47,6 +47,15 @@ install-service:
 panel-deploy:
 	bash scripts/deploy-panel.sh
 
+# Build CLI binary (local macOS)
+cli:
+	cd cli && $(MAKE) build
+
+# Install CLI to /usr/local/bin
+cli-install:
+	cd cli && $(MAKE) install
+
 # Clean build artifacts
 clean:
 	rm -f phpless-manager/bin/phpless-manager
+	rm -rf cli/bin/
