@@ -8,7 +8,7 @@ import (
 )
 
 // DeployToOverlay mounts a tenant's overlay image and syncs app code into it.
-func DeployToOverlay(overlayPath, appDir string) error {
+func DeployToOverlay(overlayPath, appDir, envContent string) error {
 	if _, err := os.Stat(overlayPath); os.IsNotExist(err) {
 		return fmt.Errorf("overlay image not found: %s", overlayPath)
 	}
@@ -44,11 +44,19 @@ func DeployToOverlay(overlayPath, appDir string) error {
 		return fmt.Errorf("rsync app code: %w", err)
 	}
 
+	// Write .env file if env content provided
+	if envContent != "" {
+		envPath := filepath.Join(upperApp, ".env")
+		if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
+			return fmt.Errorf("write .env: %w", err)
+		}
+	}
+
 	return nil
 }
 
 // DeployToRootfs mounts a tenant's rootfs image and syncs app code into /app/public/.
-func DeployToRootfs(rootfsPath, appDir string) error {
+func DeployToRootfs(rootfsPath, appDir, envContent string) error {
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs image not found: %s", rootfsPath)
 	}
@@ -76,6 +84,14 @@ func DeployToRootfs(rootfsPath, appDir string) error {
 		appPublic+"/",
 	); err != nil {
 		return fmt.Errorf("rsync app code: %w", err)
+	}
+
+	// Write .env file if env content provided
+	if envContent != "" {
+		envPath := filepath.Join(mountDir, "app", ".env")
+		if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
+			return fmt.Errorf("write .env: %w", err)
+		}
 	}
 
 	return nil

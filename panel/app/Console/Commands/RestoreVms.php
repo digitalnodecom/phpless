@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\App;
 use App\Services\CaddyConfigManager;
+use App\Services\EnvironmentVariableService;
 use App\Services\VMManagerClient;
 use Illuminate\Console\Command;
 
@@ -13,7 +14,7 @@ class RestoreVms extends Command
 
     protected $description = 'Recreate VMs for all apps after a server reboot';
 
-    public function handle(VMManagerClient $vmManager, CaddyConfigManager $caddyConfig): int
+    public function handle(VMManagerClient $vmManager, CaddyConfigManager $caddyConfig, EnvironmentVariableService $envService): int
     {
         $this->info('Waiting for VM manager...');
 
@@ -38,7 +39,7 @@ class RestoreVms extends Command
 
         foreach ($apps as $app) {
             try {
-                $this->restoreApp($app, $vmManager);
+                $this->restoreApp($app, $vmManager, $envService);
                 $succeeded++;
                 $this->info("  [{$app->slug}] restored (vm_id={$app->vm_id}, ip={$app->vm_ip})");
             } catch (\Throwable $e) {
@@ -77,7 +78,7 @@ class RestoreVms extends Command
         return false;
     }
 
-    private function restoreApp(App $app, VMManagerClient $vmManager): void
+    private function restoreApp(App $app, VMManagerClient $vmManager, EnvironmentVariableService $envService): void
     {
         $vm = $vmManager->createVM($app->slug, $app->vcpus, $app->mem_mib);
         $vmId = $vm['id'] ?? $app->slug;
@@ -99,7 +100,8 @@ class RestoreVms extends Command
         // the VM and recreates it with a new ID/IP, so we must update the DB.
         $buildDir = config('phpless.builds_dir') . '/' . $app->slug;
         if (is_dir($buildDir)) {
-            $result = $vmManager->deployCode($vmId, $buildDir);
+            $envContent = $envService->generateEnvContent($app);
+            $result = $vmManager->deployCode($vmId, $buildDir, $envContent);
             $newVmId = $result['vm_id'] ?? $vmId;
 
             $vm = $vmManager->waitForRunning($newVmId);

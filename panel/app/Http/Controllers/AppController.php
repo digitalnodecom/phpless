@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\App;
 use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
+use App\Services\EnvironmentVariableService;
 use App\Services\VMManagerClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -128,7 +129,7 @@ class AppController extends Controller
         return back()->with('success', 'Code saved.');
     }
 
-    public function deploy(App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy): RedirectResponse
+    public function deploy(App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): RedirectResponse
     {
         Gate::authorize('view', $app);
 
@@ -143,7 +144,8 @@ class AppController extends Controller
         }
 
         try {
-            $result = $vmManager->deployCode($app->vm_id, $buildDir);
+            $envContent = $envService->generateEnvContent($app);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent);
 
             // Deploy restarts the VM — sync the new VM state
             $newVmId = $result['vm_id'] ?? $app->vm_id;

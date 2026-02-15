@@ -69,7 +69,8 @@ type VMResponse struct {
 
 // DeployRequest is the request body for deploying code.
 type DeployRequest struct {
-	AppDir string `json:"app_dir"`
+	AppDir     string `json:"app_dir"`
+	EnvContent string `json:"env_content,omitempty"`
 }
 
 // UpstreamResponse is returned for Caddy routing queries.
@@ -172,7 +173,7 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 
 	if v.Config.Overlay {
 		overlayPath := v.Config.OverlayPath("/srv/firecracker/tenants")
-		if err := deploy.DeployToOverlay(overlayPath, req.AppDir); err != nil {
+		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.EnvContent); err != nil {
 			httpError(w, http.StatusInternalServerError, "deploy failed: %v", err)
 			return
 		}
@@ -186,8 +187,9 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 
 	// Non-overlay: stop VM, deploy to rootfs, restart
 	appDir := req.AppDir
+	envContent := req.EnvContent
 	newVM, err := s.manager.Redeploy(id, func(rootfsPath string) error {
-		return deploy.DeployToRootfs(rootfsPath, appDir)
+		return deploy.DeployToRootfs(rootfsPath, appDir, envContent)
 	})
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "deploy failed: %v", err)

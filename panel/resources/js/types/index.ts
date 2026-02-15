@@ -126,6 +126,16 @@ export interface LogEntry {
     size: number;
 }
 
+export interface EnvironmentVariable {
+    id: number;
+    key: string;
+    value: string;
+    is_secret: boolean;
+    source?: 'app' | 'team';
+    created_at: string;
+    updated_at: string;
+}
+
 export interface DashboardStats {
     totalApps: number;
     runningApps: number;

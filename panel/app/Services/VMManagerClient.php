@@ -67,11 +67,15 @@ class VMManagerClient
         }
     }
 
-    public function deployCode(string $vmId, string $appDir): array
+    public function deployCode(string $vmId, string $appDir, string $envContent = ''): array
     {
-        $response = $this->request()->timeout(60)->post("/vms/{$vmId}/deploy", [
-            'app_dir' => $appDir,
-        ]);
+        $payload = ['app_dir' => $appDir];
+
+        if ($envContent !== '') {
+            $payload['env_content'] = $envContent;
+        }
+
+        $response = $this->request()->timeout(60)->post("/vms/{$vmId}/deploy", $payload);
 
         if ($response->failed()) {
             throw new RuntimeException("Failed to deploy code: {$response->body()}");

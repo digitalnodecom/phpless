@@ -31,6 +31,11 @@ class Team extends Model
         return $this->hasMany(App::class);
     }
 
+    public function environmentVariables(): HasMany
+    {
+        return $this->hasMany(EnvironmentVariable::class);
+    }
+
     public function appLimit(): int
     {
         return match ($this->plan) {
