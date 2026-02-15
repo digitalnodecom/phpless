@@ -68,19 +68,19 @@ jobs:
           # Update version (strip leading v)
           sed -i "s/version \".*\"/version \"${VER#v}\"/" "$F"
           # Update sha256 values in order: darwin-arm64, darwin-amd64, linux-amd64
-          python3 -c "
-          import re, sys, os
-          content = open('$F').read()
+          python3 << 'PYEOF'
+          import re, os
+          f = "homebrew-tap/Formula/phpless.rb"
+          content = open(f).read()
           shas = [os.environ['SHA_DARWIN_ARM64'], os.environ['SHA_DARWIN_AMD64'], os.environ['SHA_LINUX_AMD64']]
-          i = 0
+          idx = [0]
           def repl(m):
-              nonlocal i
-              result = f'sha256 \"{shas[i]}\"'
-              i += 1
-              return result
-          content = re.sub(r'sha256 \"[^\"]+\"', repl, content)
-          open('$F', 'w').write(content)
-          "
+              r = f'sha256 "{shas[idx[0]]}"'
+              idx[0] += 1
+              return r
+          content = re.sub(r'sha256 "[^"]+"', repl, content)
+          open(f, 'w').write(content)
+          PYEOF
 
       - name: Push formula update
         working-directory: homebrew-tap
