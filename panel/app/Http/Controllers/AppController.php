@@ -6,6 +6,7 @@ use App\Models\App;
 use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
 use App\Services\VMManagerClient;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
@@ -14,6 +15,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
+use SplFileObject;
 
 class AppController extends Controller
 {
@@ -171,5 +173,82 @@ class AppController extends Controller
         } catch (\RuntimeException $e) {
             return back()->withErrors(['deploy' => $e->getMessage()]);
         }
+    }
+
+    public function analytics(App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $metrics = $app->requestMetrics()
+            ->where('period', '>=', now()->subDays(7))
+            ->orderBy('period')
+            ->get();
+
+        $totalRequests = $metrics->sum('requests');
+        $totalErrors = $metrics->sum('status_4xx') + $metrics->sum('status_5xx');
+
+        return response()->json([
+            'metrics' => $metrics,
+            'summary' => [
+                'total_requests' => $totalRequests,
+                'avg_duration' => $totalRequests > 0
+                    ? round($metrics->sum(fn ($m) => $m->avg_duration * $m->requests) / $totalRequests, 4)
+                    : 0,
+                'error_rate' => $totalRequests > 0
+                    ? round($totalErrors / $totalRequests * 100, 1)
+                    : 0,
+                'total_bytes' => $metrics->sum('bytes_sent'),
+            ],
+        ]);
+    }
+
+    public function logs(App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $logPath = config('phpless.log_dir') . '/' . $app->slug . '.log';
+
+        if (! file_exists($logPath)) {
+            return response()->json(['logs' => []]);
+        }
+
+        $lines = [];
+
+        try {
+            $file = new SplFileObject($logPath, 'r');
+            $file->seek(PHP_INT_MAX);
+            $totalLines = $file->key();
+
+            $start = max(0, $totalLines - 100);
+            $file->seek($start);
+
+            while (! $file->eof()) {
+                $line = trim($file->fgets());
+                if ($line === '') {
+                    continue;
+                }
+
+                $entry = json_decode($line, true);
+                if (! $entry || ! isset($entry['ts'])) {
+                    continue;
+                }
+
+                $request = $entry['request'] ?? [];
+
+                $lines[] = [
+                    'timestamp' => date('Y-m-d H:i:s', (int) $entry['ts']),
+                    'method' => $request['method'] ?? '-',
+                    'path' => $request['uri'] ?? '-',
+                    'status' => $entry['status'] ?? 0,
+                    'duration' => round(($entry['duration'] ?? 0) * 1000, 1),
+                    'client_ip' => $request['client_ip'] ?? ($request['remote_ip'] ?? '-'),
+                    'size' => $entry['size'] ?? 0,
+                ];
+            }
+        } catch (\Throwable) {
+            // Log file unreadable
+        }
+
+        return response()->json(['logs' => $lines]);
     }
 }

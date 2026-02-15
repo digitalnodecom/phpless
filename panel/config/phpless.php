@@ -5,4 +5,5 @@ return [
     'domain' => env('PHPLESS_DOMAIN', 'phpless.digitalno.de'),
     'caddyfile_path' => env('PHPLESS_CADDYFILE_PATH', '/etc/caddy/Caddyfile'),
     'builds_dir' => env('PHPLESS_BUILDS_DIR', '/var/www/phpless/builds'),
+    'log_dir' => env('PHPLESS_LOG_DIR', '/var/log/phpless/apps'),
 ];

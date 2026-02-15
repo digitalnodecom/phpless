@@ -20,6 +20,8 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::get('apps/{app}/code', [AppController::class, 'code'])->name('apps.code');
     Route::put('apps/{app}/code', [AppController::class, 'updateCode'])->name('apps.code.update');
     Route::post('apps/{app}/deploy', [AppController::class, 'deploy'])->name('apps.deploy');
+    Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
+    Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
 });
 
 require __DIR__.'/settings.php';

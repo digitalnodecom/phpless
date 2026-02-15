@@ -96,6 +96,36 @@ export interface Domain {
     updated_at: string;
 }
 
+export interface RequestMetric {
+    id: number;
+    app_id: number;
+    period: string;
+    requests: number;
+    avg_duration: number;
+    status_2xx: number;
+    status_3xx: number;
+    status_4xx: number;
+    status_5xx: number;
+    bytes_sent: number;
+}
+
+export interface AnalyticsSummary {
+    total_requests: number;
+    avg_duration: number;
+    error_rate: number;
+    total_bytes: number;
+}
+
+export interface LogEntry {
+    timestamp: string;
+    method: string;
+    path: string;
+    status: number;
+    duration: number;
+    client_ip: string;
+    size: number;
+}
+
 export interface DashboardStats {
     totalApps: number;
     runningApps: number;

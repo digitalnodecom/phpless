@@ -52,6 +52,11 @@ class App extends Model
         return $this->hasMany(EnvironmentVariable::class);
     }
 
+    public function requestMetrics(): HasMany
+    {
+        return $this->hasMany(RequestMetric::class);
+    }
+
     public function url(): string
     {
         $domain = config('phpless.domain');

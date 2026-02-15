@@ -10,11 +10,13 @@ class CaddyConfigManager
 {
     private string $caddyfilePath;
     private string $domain;
+    private string $logDir;
 
     public function __construct()
     {
         $this->caddyfilePath = config('phpless.caddyfile_path');
         $this->domain = config('phpless.domain');
+        $this->logDir = config('phpless.log_dir');
     }
 
     public function regenerateAndReload(): void
@@ -58,6 +60,14 @@ class CaddyConfigManager
             } else {
                 $lines[] = "\trespond \"App is {$app->vm_state}\" 503";
             }
+            $lines[] = "\tlog {";
+            $lines[] = "\t\toutput file {$this->logDir}/{$app->slug}.log {";
+            $lines[] = "\t\t\troll_size 50MiB";
+            $lines[] = "\t\t\troll_keep 3";
+            $lines[] = "\t\t\troll_keep_for 168h";
+            $lines[] = "\t\t}";
+            $lines[] = "\t\tformat json";
+            $lines[] = "\t}";
             $lines[] = '}';
             $lines[] = '';
         }

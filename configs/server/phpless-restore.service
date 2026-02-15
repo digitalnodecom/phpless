@@ -1,0 +1,13 @@
+[Unit]
+Description=PHPless VM Restore
+After=phpless-manager.service
+Requires=phpless-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/php /var/www/phpless/panel/artisan app:restore-vms
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target

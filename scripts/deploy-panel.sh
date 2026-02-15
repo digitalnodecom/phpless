@@ -71,8 +71,7 @@ touch database/database.sqlite
 # Run migrations
 php artisan migrate --force
 
-# Cache config/routes/views
-php artisan config:cache
+# Cache routes/views (skip config:cache — .env not resolved correctly when run as root)
 php artisan route:cache
 php artisan view:cache
 
@@ -87,13 +86,21 @@ echo "[5/7] Deploying server configs..."
 scp /var/www/phpless/configs/server/phpless-fpm.conf "$SERVER:/etc/php/8.4/fpm/pool.d/phpless.conf"
 scp /var/www/phpless/configs/server/phpless-queue.service "$SERVER:/etc/systemd/system/phpless-queue.service"
 scp /var/www/phpless/configs/server/phpless-sudoers "$SERVER:/etc/sudoers.d/phpless"
+scp /var/www/phpless/configs/server/phpless-restore.service "$SERVER:/etc/systemd/system/phpless-restore.service"
 ssh "$SERVER" 'chmod 440 /etc/sudoers.d/phpless'
 
-# Step 6: Set up manager socket permissions
-echo "[6/7] Configuring socket permissions..."
+# Step 6: Set up manager socket permissions and log directory
+echo "[6/7] Configuring socket permissions and log directory..."
 ssh "$SERVER" 'bash -s' << 'SOCKET'
 # Allow www-data to access the VM manager socket
 chmod 0666 /var/fc/manager.sock 2>/dev/null || true
+
+# Create log directory for per-app Caddy access logs
+mkdir -p /var/log/phpless/apps
+chown -R caddy:caddy /var/log/phpless
+chmod 755 /var/log/phpless /var/log/phpless/apps
+# Ensure www-data can read the logs (Caddy creates files as 0600)
+setfacl -d -m u:www-data:r /var/log/phpless/apps 2>/dev/null || true
 
 # Restart PHP-FPM
 systemctl restart php8.4-fpm
@@ -102,6 +109,9 @@ systemctl restart php8.4-fpm
 systemctl daemon-reload
 systemctl enable phpless-queue
 systemctl restart phpless-queue
+
+# Enable VM restore on boot
+systemctl enable phpless-restore
 SOCKET
 
 # Step 7: Update Caddy config
