@@ -1,0 +1,37 @@
+# PHPless Host Caddyfile
+# Routes traffic to Firecracker microVMs
+
+{
+	email admin@phpless.io
+	admin off
+}
+
+# Landing page
+phpless.digitalno.de {
+	respond "PHPless Platform — OK" 200
+}
+
+# Test subdomain — direct to test VM
+test.phpless.digitalno.de {
+	reverse_proxy 10.0.1.2:8080
+	header {
+		X-Powered-By "PHPless"
+	}
+}
+
+# Catch-all for other subdomains on port 80
+# VMs created via the manager get explicit HTTPS blocks added by reloading config
+:80 {
+	@phpless_sub header_regexp Host ^([a-z0-9-]+)\.phpless\.digitalno\.de$
+	handle @phpless_sub {
+		respond "App not found — VM not running" 404
+	}
+	handle {
+		respond "PHPless Engine" 200
+	}
+}
+
+# Health check endpoint
+:8081 {
+	respond /health "PHPless Host OK" 200
+}

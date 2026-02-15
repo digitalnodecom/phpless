@@ -1,0 +1,67 @@
+#!/bin/sh
+echo "[phpless-init] Starting..."
+
+# Kernel may have already mounted devtmpfs and proc
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devtmpfs devtmpfs /dev || true
+mkdir -p /dev/pts /dev/shm /tmp /run
+mount -t devpts devpts /dev/pts || true
+mount -t tmpfs tmpfs /dev/shm || true
+mount -t tmpfs tmpfs /tmp || true
+mount -t tmpfs tmpfs /run || true
+
+echo "[phpless-init] Filesystems mounted"
+
+hostname phpless || true
+ip link set lo up || true
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+mkdir -p /tmp/sessions
+
+# Seed entropy using RNDADDENTROPY ioctl - critical for FrankenPHP/Go in Firecracker
+echo "[phpless-init] Seeding entropy..."
+/usr/local/bin/add_entropy || true
+ENTROPY=$(cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "unknown")
+echo "[phpless-init] Entropy available: $ENTROPY"
+
+export HOME=/root
+export XDG_CONFIG_HOME=/root/.config
+export XDG_DATA_HOME=/root/.local/share
+
+# Parse kernel cmdline for overlay flag
+OVERLAY=0
+for param in $(cat /proc/cmdline); do
+    case "$param" in
+        overlay=1) OVERLAY=1 ;;
+    esac
+done
+
+# Set up overlay filesystem if second drive is present
+if [ "$OVERLAY" = "1" ] && [ -b /dev/vdb ]; then
+    echo "[phpless-init] Setting up overlay filesystem..."
+    mkdir -p /mnt/overlay
+    mount /dev/vdb /mnt/overlay
+    mkdir -p /mnt/overlay/upper /mnt/overlay/work
+    if [ -d /mnt/overlay/upper/app ]; then
+        mount -t overlay overlay \
+            -o lowerdir=/app,upperdir=/mnt/overlay/upper/app,workdir=/mnt/overlay/work \
+            /app
+        echo "[phpless-init] Overlay mounted for /app"
+    fi
+else
+    echo "[phpless-init] Running without overlay (single rootfs mode)"
+fi
+
+# Load .env if present
+if [ -f /app/.env ]; then
+    set -a
+    . /app/.env
+    set +a
+    echo "[phpless-init] Loaded /app/.env"
+fi
+
+echo "[phpless-init] Starting FrankenPHP on :8080..."
+exec /usr/local/bin/frankenphp run \
+    --config /etc/frankenphp/Caddyfile \
+    --adapter caddyfile

@@ -1,0 +1,24 @@
+{
+	admin off
+	auto_https off
+
+	frankenphp
+
+	servers {
+		protocols h1 h2c
+	}
+}
+
+:8080 {
+	root * /app/public
+
+	encode zstd gzip
+
+	php_server
+
+	log {
+		output stderr
+		format console
+		level ERROR
+	}
+}

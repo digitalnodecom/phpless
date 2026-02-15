@@ -1,0 +1,29 @@
+[Unit]
+Description=PHPless VM Manager
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/phpless-manager \
+    --socket /var/fc/manager.sock \
+    --bridge br-phpless \
+    --bridge-cidr 10.0.0.1/16 \
+    --kernel /srv/firecracker/base/kernel/vmlinux-5.10-custom \
+    --base-image /srv/firecracker/base/rootfs-base.sqfs \
+    --base-ext4 /srv/firecracker/base/rootfs-base.ext4 \
+    --tenant-dir /srv/firecracker/tenants \
+    --socket-dir /srv/firecracker/sockets \
+    --log-level info
+Restart=always
+RestartSec=5
+RuntimeDirectory=fc
+StateDirectory=fc
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,35 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+.fleet/
+.zed/
+*.swp
+
+# Claude
+.claude/
+
+# Panel (Laravel)
+panel/.env
+panel/.env.backup
+panel/.env.production
+panel/node_modules/
+panel/vendor/
+panel/public/build/
+panel/public/hot/
+panel/public/storage/
+panel/storage/*.key
+panel/storage/pail/
+panel/bootstrap/ssr/
+panel/database/database.sqlite
+
+# Go
+phpless-manager/phpless-manager
+
+# Build artifacts
+bin/
+*.ext4
+*.sqfs
