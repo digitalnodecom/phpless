@@ -8,12 +8,12 @@ LOCAL_DIR="/var/www/phpless/panel"
 echo "=== PHPless Panel Deployment ==="
 
 # Step 1: Build frontend locally
-echo "[1/7] Building frontend assets..."
+echo "[1/6] Building frontend assets..."
 cd "$LOCAL_DIR"
 npm run build
 
 # Step 2: Install PHP 8.4 FPM + Node on server if needed
-echo "[2/7] Ensuring server dependencies..."
+echo "[2/6] Ensuring server dependencies..."
 ssh "$SERVER" 'bash -s' << 'DEPS'
 # PHP 8.4 FPM
 if ! dpkg -l php8.4-fpm &>/dev/null; then
@@ -38,7 +38,7 @@ fi
 DEPS
 
 # Step 3: Rsync panel to server
-echo "[3/7] Syncing panel files to server..."
+echo "[3/6] Syncing panel files to server..."
 rsync -avz --delete \
     --exclude='.env' \
     --exclude='node_modules' \
@@ -52,7 +52,7 @@ rsync -avz --delete \
     "$LOCAL_DIR/" "$SERVER:$REMOTE_DIR/"
 
 # Step 4: Server-side setup
-echo "[4/7] Running server-side setup..."
+echo "[4/6] Running server-side setup..."
 ssh "$SERVER" 'bash -s' << 'SETUP'
 cd /var/www/phpless/panel
 
@@ -82,16 +82,16 @@ chmod 664 database/database.sqlite
 SETUP
 
 # Step 5: Deploy server configs
-echo "[5/7] Deploying server configs..."
+echo "[5/6] Deploying server configs..."
 scp /var/www/phpless/configs/server/phpless-fpm.conf "$SERVER:/etc/php/8.4/fpm/pool.d/phpless.conf"
 scp /var/www/phpless/configs/server/phpless-queue.service "$SERVER:/etc/systemd/system/phpless-queue.service"
 scp /var/www/phpless/configs/server/phpless-sudoers "$SERVER:/etc/sudoers.d/phpless"
-scp /var/www/phpless/configs/server/phpless-restore.service "$SERVER:/etc/systemd/system/phpless-restore.service"
+scp /var/www/phpless/configs/phpless-manager.service "$SERVER:/etc/systemd/system/phpless-manager.service"
 ssh "$SERVER" 'chmod 440 /etc/sudoers.d/phpless'
 
-# Step 6: Set up manager socket permissions and log directory
-echo "[6/7] Configuring socket permissions and log directory..."
-ssh "$SERVER" 'bash -s' << 'SOCKET'
+# Step 6: Restart services
+echo "[6/6] Restarting services..."
+ssh "$SERVER" 'bash -s' << 'SERVICES'
 # Allow www-data to access the VM manager socket
 chmod 0666 /var/fc/manager.sock 2>/dev/null || true
 
@@ -99,7 +99,6 @@ chmod 0666 /var/fc/manager.sock 2>/dev/null || true
 mkdir -p /var/log/phpless/apps
 chown -R caddy:caddy /var/log/phpless
 chmod 755 /var/log/phpless /var/log/phpless/apps
-# Ensure www-data can read the logs (Caddy creates files as 0600)
 setfacl -d -m u:www-data:r /var/log/phpless/apps 2>/dev/null || true
 
 # Restart PHP-FPM
@@ -110,31 +109,10 @@ systemctl daemon-reload
 systemctl enable phpless-queue
 systemctl restart phpless-queue
 
-# Enable VM restore on boot
-systemctl enable phpless-restore
-SOCKET
-
-# Step 7: Update Caddy config
-echo "[7/7] Updating Caddy config..."
-ssh "$SERVER" 'bash -s' << 'CADDY'
-# Generate initial Caddyfile with panel block
-cat > /etc/caddy/Caddyfile << 'EOF'
-phpless.digitalno.de {
-	root * /var/www/phpless/panel/public
-	php_fastcgi unix//run/php/php8.4-fpm.sock
-	file_server
-	encode gzip
-}
-
-*.phpless.digitalno.de {
-	tls {
-		on_demand
-	}
-	respond "Not Found" 404
-}
-EOF
-systemctl reload caddy
-CADDY
+# Regenerate Caddy config from database (preserves per-app routes)
+cd /var/www/phpless/panel
+php artisan tinker --execute="app(App\Services\CaddyConfigManager::class)->regenerateAndReload();" 2>&1 || true
+SERVICES
 
 echo ""
 echo "=== Deployment complete! ==="

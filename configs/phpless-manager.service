@@ -9,12 +9,12 @@ ExecStart=/usr/local/bin/phpless-manager \
     --socket /var/fc/manager.sock \
     --bridge br-phpless \
     --bridge-cidr 10.0.0.1/16 \
-    --kernel /srv/firecracker/base/kernel/vmlinux-5.10-custom \
-    --base-image /srv/firecracker/base/rootfs-base.sqfs \
+    --kernel /srv/firecracker/base/kernel/vmlinux.bin \
     --base-ext4 /srv/firecracker/base/rootfs-base.ext4 \
     --tenant-dir /srv/firecracker/tenants \
     --socket-dir /srv/firecracker/sockets \
     --log-level info
+ExecStartPost=/bin/bash -c 'sleep 2 && /usr/bin/php /var/www/phpless/panel/artisan app:restore-vms || true'
 Restart=always
 RestartSec=5
 RuntimeDirectory=fc
