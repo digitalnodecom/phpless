@@ -1,0 +1,46 @@
+name: CLI Release
+
+on:
+  push:
+    tags:
+      - 'cli/v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: cli/go.sum
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#cli/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries
+        working-directory: cli
+        run: |
+          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o ../phpless-darwin-arm64 ./cmd/phpless
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o ../phpless-darwin-amd64 ./cmd/phpless
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o ../phpless-linux-amd64 ./cmd/phpless
+
+      - name: Generate checksums
+        run: sha256sum phpless-darwin-arm64 phpless-darwin-amd64 phpless-linux-amd64 > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CLI ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            phpless-darwin-arm64
+            phpless-darwin-amd64
+            phpless-linux-amd64
+            checksums.txt
