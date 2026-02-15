@@ -19,8 +19,8 @@ const mainNavItems: NavItem[] = [
         icon: Boxes,
     },
     {
-        title: 'Team Settings',
-        url: '/team/env',
+        title: 'Settings',
+        url: '/settings/team/env',
         icon: Settings,
     },
 ];

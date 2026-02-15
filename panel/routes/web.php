@@ -35,11 +35,11 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::put('apps/{app}/env/{envVar}', [EnvironmentVariableController::class, 'update'])->name('apps.env.update');
     Route::delete('apps/{app}/env/{envVar}', [EnvironmentVariableController::class, 'destroy'])->name('apps.env.destroy');
 
-    // Team env vars
-    Route::get('team/env', [TeamEnvironmentVariableController::class, 'index'])->name('team.env.index');
-    Route::post('team/env', [TeamEnvironmentVariableController::class, 'store'])->name('team.env.store');
-    Route::put('team/env/{envVar}', [TeamEnvironmentVariableController::class, 'update'])->name('team.env.update');
-    Route::delete('team/env/{envVar}', [TeamEnvironmentVariableController::class, 'destroy'])->name('team.env.destroy');
+    // Team settings
+    Route::get('settings/team/env', [TeamEnvironmentVariableController::class, 'index'])->name('team.env.index');
+    Route::post('settings/team/env', [TeamEnvironmentVariableController::class, 'store'])->name('team.env.store');
+    Route::put('settings/team/env/{envVar}', [TeamEnvironmentVariableController::class, 'update'])->name('team.env.update');
+    Route::delete('settings/team/env/{envVar}', [TeamEnvironmentVariableController::class, 'destroy'])->name('team.env.destroy');
 });
 
 require __DIR__.'/settings.php';

@@ -23,7 +23,7 @@ class TeamEnvironmentVariableController extends Controller
             return response()->json(['vars' => $vars]);
         }
 
-        return Inertia::render('teams/env', [
+        return Inertia::render('settings/team-env', [
             'vars' => $vars,
         ]);
     }
