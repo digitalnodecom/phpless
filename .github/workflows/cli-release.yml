@@ -32,7 +32,12 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o ../phpless-linux-amd64 ./cmd/phpless
 
       - name: Generate checksums
-        run: sha256sum phpless-darwin-arm64 phpless-darwin-amd64 phpless-linux-amd64 > checksums.txt
+        id: checksums
+        run: |
+          sha256sum phpless-darwin-arm64 phpless-darwin-amd64 phpless-linux-amd64 > checksums.txt
+          echo "darwin_arm64=$(sha256sum phpless-darwin-arm64 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "darwin_amd64=$(sha256sum phpless-darwin-amd64 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$(sha256sum phpless-linux-amd64 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -44,3 +49,45 @@ jobs:
             phpless-darwin-amd64
             phpless-linux-amd64
             checksums.txt
+
+      - name: Update Homebrew formula
+        uses: actions/checkout@v4
+        with:
+          repository: digitalnodecom/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Bump formula version and checksums
+        env:
+          VER: ${{ steps.version.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ steps.checksums.outputs.darwin_arm64 }}
+          SHA_DARWIN_AMD64: ${{ steps.checksums.outputs.darwin_amd64 }}
+          SHA_LINUX_AMD64: ${{ steps.checksums.outputs.linux_amd64 }}
+        run: |
+          F=homebrew-tap/Formula/phpless.rb
+          # Update version (strip leading v)
+          sed -i "s/version \".*\"/version \"${VER#v}\"/" "$F"
+          # Update sha256 values in order: darwin-arm64, darwin-amd64, linux-amd64
+          python3 -c "
+          import re, sys, os
+          content = open('$F').read()
+          shas = [os.environ['SHA_DARWIN_ARM64'], os.environ['SHA_DARWIN_AMD64'], os.environ['SHA_LINUX_AMD64']]
+          i = 0
+          def repl(m):
+              nonlocal i
+              result = f'sha256 \"{shas[i]}\"'
+              i += 1
+              return result
+          content = re.sub(r'sha256 \"[^\"]+\"', repl, content)
+          open('$F', 'w').write(content)
+          "
+
+      - name: Push formula update
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/phpless.rb
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update phpless to ${{ steps.version.outputs.version }}"
+          git push
