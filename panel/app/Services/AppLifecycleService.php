@@ -26,7 +26,7 @@ class AppLifecycleService
             'name' => $data['name'],
             'slug' => $slug,
             'vcpus' => $data['vcpus'] ?? 1,
-            'mem_mib' => $data['mem_mib'] ?? 128,
+            'mem_mib' => $data['mem_mib'] ?? 256,
             'vm_state' => 'creating',
         ]);
 

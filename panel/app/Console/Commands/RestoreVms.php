@@ -95,9 +95,20 @@ class RestoreVms extends Command
         ]);
 
         // Redeploy code if a build exists
+        // Note: deployCode triggers Redeploy in the Go manager which destroys
+        // the VM and recreates it with a new ID/IP, so we must update the DB.
         $buildDir = config('phpless.builds_dir') . '/' . $app->slug;
         if (is_dir($buildDir)) {
-            $vmManager->deployCode($vmId, $buildDir);
+            $result = $vmManager->deployCode($vmId, $buildDir);
+            $newVmId = $result['vm_id'] ?? $vmId;
+
+            $vm = $vmManager->waitForRunning($newVmId);
+            $app->update([
+                'vm_id' => $newVmId,
+                'vm_ip' => $vm['ip'] ?? null,
+                'vm_state' => 'running',
+            ]);
+
             $this->line("    deployed code from {$buildDir}");
         }
     }
