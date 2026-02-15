@@ -314,7 +314,7 @@ phpless-manager/
 | `GET` | `/vms/` | List all VMs |
 | `GET` | `/vms/{id}` | Get VM details |
 | `DELETE` | `/vms/{id}` | Stop and destroy a VM |
-| `POST` | `/vms/{id}/deploy` | Deploy code to a VM (app_dir) |
+| `POST` | `/vms/{id}/deploy` | Deploy code to a VM (app_dir, optional env_content) |
 | `GET` | `/upstreams/{slug}` | Get VM address for Caddy routing |
 | `GET` | `/health` | Health check (total/running VM counts) |
 
@@ -331,6 +331,11 @@ type VMConfig struct {
     Subnet    string // 255.255.0.0
     MAC       string // AA:FC:00:xx:xx:01
     Overlay   bool   // SquashFS+overlay vs single ext4 copy
+}
+
+type DeployRequest struct {
+    AppDir     string `json:"app_dir"`
+    EnvContent string `json:"env_content,omitempty"` // .env file content to inject
 }
 
 type VMResponse struct {
@@ -417,14 +422,16 @@ Two modes depending on VM configuration:
 1. Stop VM (can't dual-mount ext4)
 2. Mount rootfs ext4 with loop device
 3. `rsync -a --delete appDir/ mountDir/app/public/`
-4. Unmount
-5. Restart VM
+4. Write `envContent` to `mountDir/app/.env` (if provided)
+5. Unmount
+6. Restart VM
 
 **Overlay mode:**
 1. Mount overlay ext4 with loop device
 2. rsync to `upper/app/` directory
-3. Unmount
-4. Changes visible immediately (no restart needed)
+3. Write `envContent` to `upper/app/.env` (if provided)
+4. Unmount
+5. Changes visible immediately (no restart needed)
 
 ### Systemd Service
 
@@ -438,14 +445,16 @@ ExecStart=/usr/local/bin/phpless-manager \
     --bridge br-phpless \
     --bridge-cidr 10.0.0.1/16 \
     --kernel /srv/firecracker/base/kernel/vmlinux.bin \
-    --base-image /srv/firecracker/base/rootfs-base.sqfs \
     --base-ext4 /srv/firecracker/base/rootfs-base.ext4 \
     --tenant-dir /srv/firecracker/tenants \
     --socket-dir /srv/firecracker/sockets \
     --log-level info
+ExecStartPost=/bin/bash -c 'sleep 2 && /usr/bin/php /var/www/phpless/panel/artisan app:restore-vms || true'
 Restart=always
 RestartSec=5
 ```
+
+The `ExecStartPost` is critical: VMs are child processes of the manager, so they die when the manager stops. On every manager (re)start — whether from a binary deploy or a server reboot — `app:restore-vms` recreates all VMs, redeploys code with environment variables, and regenerates the Caddy config.
 
 Build and install:
 ```bash
@@ -480,7 +489,7 @@ composer create-project laravel/react-starter-kit panel
 
 ### Database Schema
 
-7 migrations create these tables:
+8 migrations create these tables:
 
 | Table | Key Columns | Purpose |
 |-------|-------------|---------|
@@ -490,7 +499,9 @@ composer create-project laravel/react-starter-kit panel
 | `apps` | id, team_id, name, slug, vm_id, vm_ip, vm_state, vcpus, mem_mib, php_version, github_repo | PHP applications |
 | `deployments` | id, app_id, triggered_by, commit_sha, status, log, started_at, completed_at | Deploy history |
 | `domains` | id, app_id, domain, type, dns_verified, ssl_active | Custom domains |
-| `environment_variables` | id, app_id, key, value (encrypted), is_secret | App config |
+| `environment_variables` | id, team_id (nullable), app_id (nullable), key, value (encrypted), is_secret | App/team config |
+
+Environment variables support two scopes: **team-level** (shared across all apps in a team) and **app-level** (per-app overrides). A row has either `app_id` or `team_id`, never both. Unique indexes on `(app_id, key)` and `(team_id, key)` prevent duplicate keys within each scope.
 
 ### Models & Relationships
 
@@ -500,6 +511,7 @@ User ──belongsToMany──> Team (pivot: role)
      ──belongsTo──> Team (current_team)
 
 Team ──hasMany──> App
+     ──hasMany──> EnvironmentVariable (team-level)
      ──belongsToMany──> User
 
 App ──belongsTo──> Team
@@ -507,7 +519,9 @@ App ──belongsTo──> Team
 
 Deployment ──belongsTo──> App, User (triggeredBy)
 Domain ──belongsTo──> App
-EnvironmentVariable ──belongsTo──> App (value is encrypted)
+EnvironmentVariable ──belongsTo──> App OR Team (value is encrypted)
+    scopeForApp($appId)  — app-level vars only
+    scopeForTeam($teamId) — team-level vars only
 ```
 
 `Team.appLimit()` returns plan-based limits: 3 (hobby) / 10 (pro) / 50 (enterprise).
@@ -518,11 +532,11 @@ EnvironmentVariable ──belongsTo──> App (value is encrypted)
 
 ```php
 // Key methods:
-$client->createVM($slug, $vcpus, $memMib);  // POST /vms/ (30s timeout)
-$client->destroyVM($vmId);                   // DELETE /vms/{id}
-$client->deployCode($vmId, $appDir);         // POST /vms/{id}/deploy (60s timeout)
-$client->waitForRunning($vmId, $timeout);    // Polls until state=running
-$client->health();                           // GET /health
+$client->createVM($slug, $vcpus, $memMib);           // POST /vms/ (30s timeout)
+$client->destroyVM($vmId);                            // DELETE /vms/{id}
+$client->deployCode($vmId, $appDir, $envContent='');  // POST /vms/{id}/deploy (60s timeout)
+$client->waitForRunning($vmId, $timeout);             // Polls until state=running
+$client->health();                                    // GET /health
 ```
 
 **CaddyConfigManager** — Generates the host Caddyfile from all active apps and reloads Caddy.
@@ -551,6 +565,18 @@ $lifecycle->deleteApp($app);
 // 3. Regenerate Caddy config
 ```
 
+**EnvironmentVariableService** — Merges team and app environment variables, generates `.env` content for deployment.
+
+```php
+$envService->getMergedVariables($app);
+// Returns collection of team + app vars, merged (app overrides team on same key)
+// Each item has a 'source' attribute: 'team' or 'app'
+
+$envService->generateEnvContent($app);
+// Returns shell-safe .env content: KEY="value"\n
+// Escapes \, ", $, ` in values
+```
+
 ### Controllers
 
 **DashboardController** — Shows running/total apps, plan info, engine health (calls `VMManagerClient->health()`).
@@ -562,7 +588,19 @@ $lifecycle->deleteApp($app);
 - `destroy` — Delete via AppLifecycleService
 - `code` — Code editor (reads `/builds/{slug}/index.php` from disk)
 - `updateCode` — Save code to disk
-- `deploy` — Calls `deployCode()` on manager, waits for running, creates Deployment record, reloads Caddy
+- `deploy` — Generates env content via `EnvironmentVariableService`, calls `deployCode()` with it, waits for running, creates Deployment record, reloads Caddy
+- `analytics` — Returns 7-day request metrics as JSON
+- `logs` — Returns last 100 access log entries from per-app Caddy log file
+
+**EnvironmentVariableController** — CRUD for app-level env vars:
+- `index(App)` — Returns JSON with `app_vars` and `team_vars` for the app
+- `store(App)` — Creates a new app env var (key validated: `^[A-Z_][A-Z0-9_]*$`)
+- `update(App, EnvVar)` — Updates value/is_secret (key is immutable)
+- `destroy(App, EnvVar)` — Deletes an app env var
+
+**TeamEnvironmentVariableController** — CRUD for team-level env vars (owner-only writes):
+- `index` — Renders Inertia page (or JSON if `wantsJson()`)
+- `store` / `update` / `destroy` — Same pattern, scoped to `user->currentTeam`
 
 ### Custom Middleware
 
@@ -575,27 +613,45 @@ $lifecycle->deleteApp($app);
 ### Routes
 
 ```
-GET    /                       → Welcome page (public)
-GET    /dashboard              → DashboardController
-GET    /apps                   → AppController@index
-GET    /apps/create            → AppController@create
-POST   /apps                   → AppController@store
-GET    /apps/{app}             → AppController@show
-DELETE /apps/{app}             → AppController@destroy
-GET    /apps/{app}/code        → AppController@code
-PUT    /apps/{app}/code        → AppController@updateCode
-POST   /apps/{app}/deploy      → AppController@deploy
+GET    /                         → Welcome page (public)
+GET    /dashboard                → DashboardController
+GET    /apps                     → AppController@index
+GET    /apps/create              → AppController@create
+POST   /apps                     → AppController@store
+GET    /apps/{app}               → AppController@show
+DELETE /apps/{app}               → AppController@destroy
+GET    /apps/{app}/code          → AppController@code
+PUT    /apps/{app}/code          → AppController@updateCode
+POST   /apps/{app}/deploy        → AppController@deploy
+GET    /apps/{app}/analytics     → AppController@analytics
+GET    /apps/{app}/logs          → AppController@logs
+GET    /apps/{app}/env           → EnvironmentVariableController@index
+POST   /apps/{app}/env           → EnvironmentVariableController@store
+PUT    /apps/{app}/env/{envVar}  → EnvironmentVariableController@update
+DELETE /apps/{app}/env/{envVar}  → EnvironmentVariableController@destroy
+GET    /team/env                 → TeamEnvironmentVariableController@index
+POST   /team/env                 → TeamEnvironmentVariableController@store
+PUT    /team/env/{envVar}        → TeamEnvironmentVariableController@update
+DELETE /team/env/{envVar}        → TeamEnvironmentVariableController@destroy
 ```
 
-All app routes require `auth` + `EnsureHasTeam` middleware. Show/destroy/code/deploy also check `AppPolicy`.
+All routes require `auth` + `EnsureHasTeam` middleware. App routes also check `AppPolicy`. Team env var writes require team ownership.
 
 ### Frontend Pages
 
 - **Dashboard** — 3 cards: Running Apps (count/limit), Plan tier, Engine Status
 - **Apps Index** — Table listing all apps (name, slug, state badge, IP, resources, created date)
 - **Apps Create** — Form with name, auto-slug, memory dropdown, vCPU dropdown
-- **Apps Show** — Tabbed view: Overview (VM info), Deployments (placeholder), Domains (placeholder), Environment (placeholder). Actions: Edit Code, Visit, Delete
+- **Apps Show** — Tabbed view:
+  - **Overview** — VM info (ID, IP, vCPUs, memory, PHP version, URL)
+  - **Analytics** — 7-day request metrics with SVG bar chart, summary cards, status code breakdown
+  - **Logs** — Recent request log table with auto-refresh, parsed from per-app Caddy JSON logs
+  - **Deployments** — Deploy history (placeholder for git-based deploys)
+  - **Domains** — Custom domain management (placeholder)
+  - **Environment** — Full CRUD for app env vars: table with key, masked value (eye toggle for secrets), source badge (App/Team), add/edit/delete dialogs, "Deploy now to apply" prompt after changes
+  - Actions: Edit Code, Visit, Delete
 - **Apps Code** — CodeMirror editor with PHP syntax highlighting, Save and Deploy buttons
+- **Team Env** (`/team/env`) — Team-level environment variables CRUD, same table/dialog pattern as app env vars. Accessible via "Team Settings" in sidebar.
 
 ---
 
@@ -620,14 +676,16 @@ Run from your local machine (not the server):
    - Generate app key
    - Create SQLite database file
    - `php artisan migrate --force`
-   - Cache config, routes, views
+   - Cache routes, views
    - Set permissions (www-data owns storage, bootstrap/cache, database)
 5. **Deploy server configs via scp:**
    - `configs/server/phpless-fpm.conf` → `/etc/php/8.4/fpm/pool.d/phpless.conf`
    - `configs/server/phpless-queue.service` → `/etc/systemd/system/`
    - `configs/server/phpless-sudoers` → `/etc/sudoers.d/phpless`
-6. **Configure socket permissions** — `/var/fc/manager.sock` must be accessible by www-data
-7. **Restart services** — PHP-FPM, queue worker, Caddy
+   - `configs/phpless-manager.service` → `/etc/systemd/system/`
+6. **Restart services** — PHP-FPM, queue worker, regenerate Caddy config from database
+
+> **Note:** The deploy script does NOT overwrite `/etc/caddy/Caddyfile` with a static template. Instead, it calls `CaddyConfigManager->regenerateAndReload()` to rebuild the Caddyfile from the database, preserving per-app routing blocks.
 
 ### PHP-FPM Pool (`configs/server/phpless-fpm.conf`)
 
@@ -744,7 +802,9 @@ User clicks "Deploy"
          │
          ▼
 AppController@deploy
-  → VMManagerClient->deployCode(vmId, "/var/www/phpless/builds/{slug}")
+  → EnvironmentVariableService->generateEnvContent($app)
+    (merges team + app vars, generates KEY="value" format)
+  → VMManagerClient->deployCode(vmId, buildDir, envContent)
          │
          ▼
 Go Manager: api.deployCode()
@@ -752,8 +812,9 @@ Go Manager: api.deployCode()
     1. Stop running VM
     2. Mount rootfs ext4
     3. rsync /builds/{slug}/ → rootfs/app/public/
-    4. Unmount
-    5. Create new VM with same config (new IP)
+    4. Write envContent → rootfs/app/.env
+    5. Unmount
+    6. Create new VM with same config (new IP)
          │
          ▼
 VMManagerClient->waitForRunning(newVmId)
@@ -815,6 +876,13 @@ Response flows back: VM → bridge → Caddy → browser
 - The bare `frankenphp` directive (without braces or worker config) is **REQUIRED** in the global block for `php_server` to work. Without it, PHP requests return empty responses.
 - Worker mode (`worker /path/to/file.php N`) blocks startup if the PHP file doesn't call `frankenphp_handle_request()`. Use bare `php_server` for standard PHP apps.
 
+### VM Persistence
+
+- VMs are child processes of the Go manager — **they die when the manager stops**. This means a server reboot, a manager binary deploy, or a `systemctl restart phpless-manager` kills all running VMs.
+- The `ExecStartPost` in the manager's systemd service runs `php artisan app:restore-vms` after every manager (re)start. This command recreates all VMs, redeploys code with environment variables, and regenerates the Caddy config.
+- The restore command has a built-in 15-second health poll loop (`waitForManager`) to handle the delay between the manager process starting and the API socket being ready.
+- The database may briefly show stale `vm_state: running` after a manager restart — the restore command updates it to the correct state.
+
 ### Networking
 
 - The VM gateway must be the bridge IP (10.0.0.1), not the host's default gateway.
@@ -867,6 +935,7 @@ Response flows back: VM → bridge → Caddy → browser
 | **Caddy config** | `/etc/caddy/Caddyfile` |
 | **PHP-FPM pool** | `/etc/php/8.4/fpm/pool.d/phpless.conf` |
 | **Queue worker service** | `/etc/systemd/system/phpless-queue.service` |
+| **App access logs** | `/var/log/phpless/apps/{slug}.log` |
 | **Queue worker log** | `/var/log/phpless-queue.log` |
 | **PHP-FPM log** | `/var/log/php8.4-fpm-phpless.log` |
 | **Sudoers** | `/etc/sudoers.d/phpless` |
@@ -883,6 +952,7 @@ Response flows back: VM → bridge → Caddy → browser
 | **PHP config** | `configs/php.ini` |
 | **Host Caddyfile** | `configs/Caddyfile` |
 | **Manager systemd** | `configs/phpless-manager.service` |
+| **Restore service** | `configs/server/phpless-restore.service` |
 | **FPM pool config** | `configs/server/phpless-fpm.conf` |
 | **Queue service** | `configs/server/phpless-queue.service` |
 | **Sudoers file** | `configs/server/phpless-sudoers` |
@@ -906,10 +976,14 @@ Response flows back: VM → bridge → Caddy → browser
 - [x] Laravel panel scaffolded (React + Inertia + TypeScript + shadcn/ui)
 - [x] Database schema: teams, apps, deployments, domains, environment variables
 - [x] Models with relationships and team-based authorization
-- [x] Services: VMManagerClient, CaddyConfigManager, AppLifecycleService
+- [x] Services: VMManagerClient, CaddyConfigManager, AppLifecycleService, EnvironmentVariableService
 - [x] Dashboard with engine health monitoring
 - [x] App CRUD with VM provisioning
 - [x] In-browser PHP code editor (CodeMirror 6) with deploy
+- [x] Analytics tab: 7-day request metrics with charts and status code breakdown
+- [x] Logs tab: real-time access log viewer with auto-refresh
+- [x] Environment variables: two-scope (team + app) CRUD with merge logic, secret masking, deploy integration
+- [x] VM auto-restore on manager restart via ExecStartPost
 - [x] Deployed to production: https://phpless.digitalno.de
 - [x] Test account: test@phpless.io / password123
 

@@ -234,6 +234,10 @@ go test ./...
 5. **Caddy** on the host routes `<slug>.phpless.digitalno.de` to the VM's internal IP
 6. **Environment variables** are merged (team-level + app-level, app overrides) and injected as `/app/.env`
 
+### VM Persistence
+
+VMs are child processes of the Go manager — they die when the manager stops. The manager's systemd service includes an `ExecStartPost` that runs `php artisan app:restore-vms` after every (re)start. This recreates all VMs, redeploys code with environment variables, and regenerates Caddy routes. Apps survive server reboots and manager binary deploys automatically.
+
 ### Key Architecture Decisions
 
 - **FrankenPHP** (not PHP-FPM) inside VMs — single static binary, no separate web server needed
@@ -260,10 +264,12 @@ go test ./...
 
 ## Known Gotchas
 
+- **VM persistence**: VMs die when the manager restarts. The `ExecStartPost` in the systemd service handles auto-restore, but expect a brief window (~10-20s) where apps are unavailable during a manager restart.
 - **Entropy**: FrankenPHP (Go-based) blocks on `getrandom()` in the 4.14 kernel. The rootfs init script runs a custom `add_entropy` binary to seed the kernel RNG before starting FrankenPHP.
 - **Init script**: Never use `set -e` (mount commands may fail if already mounted) or `2>/dev/null` before `/dev` is ready.
 - **File uploads to VM**: Always use `scp` for the init script, never SSH heredocs (encoding issues cause `ENOEXEC`).
 - **FrankenPHP Caddyfile**: The bare `frankenphp` directive (no braces) in the global block is required for `php_server` to work.
+- **Deploy script**: Do NOT overwrite `/etc/caddy/Caddyfile` with a static template — per-app routing blocks are generated dynamically from the database by `CaddyConfigManager`.
 
 ## License
 
