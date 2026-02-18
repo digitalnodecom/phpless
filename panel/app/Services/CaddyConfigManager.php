@@ -33,7 +33,7 @@ class CaddyConfigManager
 
     private function generateConfig(): string
     {
-        $allApps = App::all();
+        $allApps = App::with(['domains' => fn ($q) => $q->where('dns_verified', true)])->get();
 
         $lines = [];
 
@@ -70,6 +70,26 @@ class CaddyConfigManager
             $lines[] = "\t}";
             $lines[] = '}';
             $lines[] = '';
+
+            // Custom domains for this app
+            foreach ($app->domains as $domain) {
+                $lines[] = "{$domain->domain} {";
+                if ($app->vm_state === 'running' && $app->vm_ip) {
+                    $lines[] = "\treverse_proxy {$app->vm_ip}:8080";
+                } else {
+                    $lines[] = "\trespond \"App is {$app->vm_state}\" 503";
+                }
+                $lines[] = "\tlog {";
+                $lines[] = "\t\toutput file {$this->logDir}/{$app->slug}.log {";
+                $lines[] = "\t\t\troll_size 50MiB";
+                $lines[] = "\t\t\troll_keep 3";
+                $lines[] = "\t\t\troll_keep_for 168h";
+                $lines[] = "\t\t}";
+                $lines[] = "\t\tformat json";
+                $lines[] = "\t}";
+                $lines[] = '}';
+                $lines[] = '';
+            }
         }
 
         // Catch-all for unknown subdomains (HTTP only — no wildcard cert)

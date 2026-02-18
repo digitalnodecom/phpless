@@ -125,6 +125,12 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
 	), handleGetLogs)
 
+	// list_files
+	s.AddTool(mcp.NewTool("list_files",
+		mcp.WithDescription("List deployed files for an app"),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+	), handleListFiles)
+
 	// list_env
 	s.AddTool(mcp.NewTool("list_env",
 		mcp.WithDescription("List environment variables"),
@@ -331,6 +337,22 @@ func handleGetLogs(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	resp, err := client.GetLogs(slug)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(resp)
+}
+
+func handleListFiles(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	resp, err := client.ListFiles(slug)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

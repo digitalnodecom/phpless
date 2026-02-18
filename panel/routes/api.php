@@ -32,6 +32,7 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
     Route::post('apps/{app:slug}/deploy', [AppController::class, 'deploy']);
     Route::get('apps/{app:slug}/download', [AppController::class, 'download']);
     Route::get('apps/{app:slug}/logs', [AppController::class, 'logs']);
+    Route::get('apps/{app:slug}/files', [AppController::class, 'files']);
 
     // App env vars
     Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);

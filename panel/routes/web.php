@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AppController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DomainController;
 use App\Http\Controllers\EnvironmentVariableController;
 use App\Http\Controllers\TeamEnvironmentVariableController;
 use App\Http\Middleware\EnsureHasTeam;
@@ -28,6 +29,12 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/deploy', [AppController::class, 'deploy'])->name('apps.deploy');
     Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
     Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
+
+    // Custom domains
+    Route::get('apps/{app}/domains', [DomainController::class, 'index'])->name('apps.domains.index');
+    Route::post('apps/{app}/domains', [DomainController::class, 'store'])->name('apps.domains.store');
+    Route::post('apps/{app}/domains/{domain}/verify', [DomainController::class, 'verify'])->name('apps.domains.verify');
+    Route::delete('apps/{app}/domains/{domain}', [DomainController::class, 'destroy'])->name('apps.domains.destroy');
 
     // App env vars
     Route::get('apps/{app}/env', [EnvironmentVariableController::class, 'index'])->name('apps.env.index');

@@ -362,6 +362,25 @@ func (c *Client) GetLogs(slug string) (*LogsResponse, error) {
 	return &resp, err
 }
 
+// --- Files ---
+
+type FileEntry struct {
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+type FilesResponse struct {
+	Files []FileEntry `json:"files"`
+	Total int         `json:"total"`
+}
+
+func (c *Client) ListFiles(slug string) (*FilesResponse, error) {
+	var resp FilesResponse
+	err := c.do("GET", "/apps/"+slug+"/files", nil, &resp)
+	return &resp, err
+}
+
 // --- Environment Variables ---
 
 type EnvVar struct {

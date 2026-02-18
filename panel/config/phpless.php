@@ -6,4 +6,5 @@ return [
     'caddyfile_path' => env('PHPLESS_CADDYFILE_PATH', '/etc/caddy/Caddyfile'),
     'builds_dir' => env('PHPLESS_BUILDS_DIR', '/var/www/phpless/builds'),
     'log_dir' => env('PHPLESS_LOG_DIR', '/var/log/phpless/apps'),
+    'server_ip' => env('PHPLESS_SERVER_IP', '65.108.14.212'),
 ];

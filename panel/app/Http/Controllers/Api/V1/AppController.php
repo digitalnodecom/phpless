@@ -106,14 +106,12 @@ class AppController extends Controller
             File::ensureDirectoryExists($buildDir);
 
             $tarball = $request->file('tarball');
-            $tarPath = $tarball->storeAs('tmp', "deploy-{$app->slug}.tar.gz");
-            $fullTarPath = storage_path("app/{$tarPath}");
+            $fullTarPath = $tarball->getRealPath();
 
             // Extract tarball
             $exitCode = 0;
             $output = [];
             exec("tar -xzf " . escapeshellarg($fullTarPath) . " -C " . escapeshellarg($buildDir) . " 2>&1", $output, $exitCode);
-            @unlink($fullTarPath);
 
             if ($exitCode !== 0) {
                 return response()->json(['message' => 'Failed to extract tarball: ' . implode("\n", $output)], 422);
@@ -236,6 +234,35 @@ class AppController extends Controller
         }
 
         return response()->json(['logs' => $lines]);
+    }
+
+    public function files(App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $buildDir = base_path("../builds/{$app->slug}");
+
+        if (! File::exists($buildDir)) {
+            return response()->json(['files' => []]);
+        }
+
+        $files = [];
+        $allFiles = File::allFiles($buildDir);
+
+        foreach ($allFiles as $file) {
+            $files[] = [
+                'path' => $file->getRelativePathname(),
+                'size' => $file->getSize(),
+                'modified_at' => date('Y-m-d H:i:s', $file->getMTime()),
+            ];
+        }
+
+        usort($files, fn ($a, $b) => strcmp($a['path'], $b['path']));
+
+        return response()->json([
+            'files' => $files,
+            'total' => count($files),
+        ]);
     }
 
     private function formatApp(App $app, bool $detailed = false): array

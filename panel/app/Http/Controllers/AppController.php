@@ -84,6 +84,7 @@ class AppController extends Controller
             'app' => $app->load(['deployments' => function ($q) {
                 $q->latest()->limit(10);
             }, 'domains']),
+            'serverIp' => config('phpless.server_ip'),
         ]);
     }
 

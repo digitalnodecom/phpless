@@ -15,7 +15,6 @@ import (
 var defaultExcludes = []string{
 	".git",
 	"node_modules",
-	"vendor",
 	".phpless.toml",
 	".DS_Store",
 	"__MACOSX",
