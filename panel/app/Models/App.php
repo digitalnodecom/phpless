@@ -22,6 +22,13 @@ class App extends Model
         'github_branch',
         'github_webhook_secret',
         'build_command',
+        'worker_mode',
+        'worker_script',
+        'worker_count',
+        'mercure_enabled',
+        'web_root',
+        'persistent_paths',
+        'workers',
     ];
 
     protected function casts(): array
@@ -29,6 +36,11 @@ class App extends Model
         return [
             'vcpus' => 'integer',
             'mem_mib' => 'integer',
+            'worker_mode' => 'boolean',
+            'worker_count' => 'integer',
+            'mercure_enabled' => 'boolean',
+            'persistent_paths' => 'array',
+            'workers' => 'array',
         ];
     }
 

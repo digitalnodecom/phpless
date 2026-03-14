@@ -15,6 +15,7 @@ class Deployment extends Model
         'branch',
         'status',
         'log',
+        'source',
         'started_at',
         'completed_at',
     ];
