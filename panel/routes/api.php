@@ -42,6 +42,9 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
     Route::get('apps/{app:slug}/files/download', [AppController::class, 'filesDownload']);
     Route::post('apps/{app:slug}/files/persistent', [AppController::class, 'setPersistent']);
 
+    // SSH proxy verification
+    Route::post('ssh/verify', [AppController::class, 'sshVerify']);
+
     // App env vars
     Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);
     Route::put('apps/{app:slug}/env', [EnvController::class, 'set']);

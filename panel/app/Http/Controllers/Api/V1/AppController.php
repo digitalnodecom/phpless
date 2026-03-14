@@ -494,6 +494,36 @@ class AppController extends Controller
     }
 
     /**
+     * Verify SSH access
+     *
+     * Verify that the authenticated user has access to an app and return the VM IP.
+     * Used internally by the SSH proxy server.
+     */
+    public function sshVerify(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'slug' => ['required', 'string'],
+        ]);
+
+        $app = App::where('slug', $validated['slug'])->first();
+
+        if (! $app) {
+            return response()->json(['message' => 'App not found.'], 404);
+        }
+
+        Gate::authorize('view', $app);
+
+        if (! $app->vm_ip || $app->vm_state !== 'running') {
+            return response()->json(['message' => 'App is not running.'], 422);
+        }
+
+        return response()->json([
+            'vm_ip' => $app->vm_ip,
+            'slug' => $app->slug,
+        ]);
+    }
+
+    /**
      * @return array{slug: string, name: string, url: string, vm_state: string|null, vcpus: int, mem_mib: int, created_at: string, updated_at: string, vm_id: string|null, vm_ip: string|null, php_version: string|null, github_repo: string|null, github_branch: string|null, deployments: array|null, domains: array|null}
      */
     private function formatApp(App $app, bool $detailed = false): array

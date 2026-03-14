@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/phpless/phpless-manager/internal/api"
 	"github.com/phpless/phpless-manager/internal/network"
+	"github.com/phpless/phpless-manager/internal/sshproxy"
 	"github.com/phpless/phpless-manager/internal/terminal"
 	"github.com/phpless/phpless-manager/internal/vm"
 	log "github.com/sirupsen/logrus"
@@ -33,6 +34,8 @@ func main() {
 	logDir := flag.String("log-dir", "/var/log/phpless/vms", "Directory for per-VM console log files")
 	sshKeyPath := flag.String("ssh-key", "/etc/phpless/terminal_id_rsa", "Path to the manager's SSH private key for terminal access")
 	termAddr := flag.String("term-addr", "127.0.0.1:7474", "TCP address for WebSocket terminal server")
+	sshProxyAddr := flag.String("ssh-proxy-addr", "0.0.0.0:7068", "TCP address for SSH proxy server")
+	panelURL := flag.String("panel-url", "https://phpless.digitalno.de", "Panel URL for SSH auth verification")
 	flag.Parse()
 
 	// Configure logging
@@ -114,6 +117,27 @@ func main() {
 			log.WithError(err).Error("Terminal server error")
 		}
 	}()
+
+	// Start SSH proxy server
+	if sshSigner != nil {
+		// Generate a separate host key for the SSH proxy server
+		proxyHostKey, _, err := terminal.EnsureKeyPair(*sshKeyPath + "_proxy")
+		if err != nil {
+			log.WithError(err).Warn("Could not initialise SSH proxy host key")
+		} else {
+			proxy := sshproxy.NewServer(sshproxy.Config{
+				ListenAddr: *sshProxyAddr,
+				HostKey:    proxyHostKey,
+				VMSigner:   sshSigner,
+				PanelURL:   *panelURL,
+			})
+			go func() {
+				if err := proxy.ListenAndServe(); err != nil {
+					log.WithError(err).Error("SSH proxy server error")
+				}
+			}()
+		}
+	}
 
 	// Initialize port forwarder — detect external interface from default route
 	extIface := detectExternalInterface()
