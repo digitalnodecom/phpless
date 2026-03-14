@@ -32,7 +32,15 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
     Route::post('apps/{app:slug}/deploy', [AppController::class, 'deploy']);
     Route::get('apps/{app:slug}/download', [AppController::class, 'download']);
     Route::get('apps/{app:slug}/logs', [AppController::class, 'logs']);
+    Route::post('apps/{app:slug}/exec', [AppController::class, 'exec']);
+
+    // File browser
     Route::get('apps/{app:slug}/files', [AppController::class, 'files']);
+    Route::post('apps/{app:slug}/files/upload', [AppController::class, 'filesUpload']);
+    Route::post('apps/{app:slug}/files/write', [AppController::class, 'filesWrite']);
+    Route::delete('apps/{app:slug}/files', [AppController::class, 'filesDelete']);
+    Route::get('apps/{app:slug}/files/download', [AppController::class, 'filesDownload']);
+    Route::post('apps/{app:slug}/files/persistent', [AppController::class, 'setPersistent']);
 
     // App env vars
     Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);

@@ -147,6 +147,14 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("slug", mcp.Description("App slug (required when scope is 'app')")),
 	), handleSetEnv)
 
+	// exec_command
+	s.AddTool(mcp.NewTool("exec_command",
+		mcp.WithDescription("Execute a shell command inside an app's Firecracker microVM. Returns stdout, stderr, and exit code. Use for running artisan commands, checking PHP status, inspecting the filesystem, etc."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithString("command", mcp.Required(), mcp.Description("Shell command to execute (e.g. 'ls -la /app', 'php artisan migrate')")),
+		mcp.WithNumber("timeout", mcp.Description("Timeout in seconds (default 30, max 300)")),
+	), handleExecCommand)
+
 	// delete_env
 	s.AddTool(mcp.NewTool("delete_env",
 		mcp.WithDescription("Delete an environment variable"),
@@ -243,6 +251,45 @@ func handleDeleteApp(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return jsonResult(resp)
+}
+
+func handleExecCommand(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	command, err := req.RequireString("command")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	timeout := req.GetInt("timeout", 30)
+
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	resp, err := client.ExecCommand(slug, command, timeout)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Truncate output for MCP context limits
+	const maxLen = 50 * 1024
+	result := map[string]any{
+		"exit_code": resp.ExitCode,
+		"stdout":    truncate(resp.Stdout, maxLen),
+		"stderr":    truncate(resp.Stderr, maxLen),
+	}
+
+	return jsonResult(result)
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "\n[output truncated]"
 }
 
 func handleDeploy(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

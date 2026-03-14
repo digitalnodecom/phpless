@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -267,6 +268,7 @@ func (c *Client) Deploy(slug string, tarball io.Reader, filename string) (*Deplo
 	if _, err := io.Copy(part, tarball); err != nil {
 		return nil, fmt.Errorf("failed to write tarball: %w", err)
 	}
+	_ = writer.WriteField("source", "cli")
 	writer.Close()
 
 	req, err := http.NewRequest("POST", c.BaseURL+"/apps/"+slug+"/deploy", &buf)
@@ -378,6 +380,157 @@ type FilesResponse struct {
 func (c *Client) ListFiles(slug string) (*FilesResponse, error) {
 	var resp FilesResponse
 	err := c.do("GET", "/apps/"+slug+"/files", nil, &resp)
+	return &resp, err
+}
+
+// --- Storage ---
+
+type StorageFile struct {
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+type StorageListResponse struct {
+	Files []StorageFile `json:"files"`
+}
+
+type StorageWriteResponse struct {
+	Message string `json:"message"`
+	Path    string `json:"path"`
+}
+
+func (c *Client) ListStorage(slug string) (*StorageListResponse, error) {
+	var resp StorageListResponse
+	err := c.do("GET", "/apps/"+slug+"/storage", nil, &resp)
+	return &resp, err
+}
+
+func (c *Client) WriteStorage(slug, path, content string) (*StorageWriteResponse, error) {
+	var resp StorageWriteResponse
+	err := c.do("POST", "/apps/"+slug+"/storage/write", map[string]string{
+		"path":    path,
+		"content": content,
+	}, &resp)
+	return &resp, err
+}
+
+func (c *Client) DeleteStorage(slug, path string) (*MessageResponse, error) {
+	var resp MessageResponse
+	err := c.do("DELETE", "/apps/"+slug+"/storage?path="+path, nil, &resp)
+	return &resp, err
+}
+
+// UploadStorage uploads a local file to persistent storage.
+// remotePath is optional; if empty the original filename is used.
+func (c *Client) UploadStorage(slug string, fileReader io.Reader, filename, remotePath string) (*StorageWriteResponse, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := io.Copy(part, fileReader); err != nil {
+		return nil, fmt.Errorf("failed to write file: %w", err)
+	}
+	if remotePath != "" {
+		_ = writer.WriteField("path", remotePath)
+	}
+	writer.Close()
+
+	req, err := http.NewRequest("POST", c.BaseURL+"/apps/"+slug+"/storage/upload", &buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		if err := json.Unmarshal(respBody, apiErr); err != nil {
+			apiErr.Message = string(respBody)
+		}
+		return nil, apiErr
+	}
+
+	var result StorageWriteResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// DownloadStorage downloads a file from persistent storage.
+// The caller is responsible for closing the returned ReadCloser.
+func (c *Client) DownloadStorage(slug, path string) (io.ReadCloser, string, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/apps/"+slug+"/storage/download?path="+path, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		if err := json.Unmarshal(body, apiErr); err != nil {
+			apiErr.Message = string(body)
+		}
+		return nil, "", apiErr
+	}
+
+	// Extract filename from Content-Disposition header if present
+	filename := path
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn, ok := params["filename"]; ok {
+				filename = fn
+			}
+		}
+	}
+
+	return resp.Body, filename, nil
+}
+
+// --- Exec ---
+
+type ExecResponse struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+func (c *Client) ExecCommand(slug, command string, timeout int) (*ExecResponse, error) {
+	body := map[string]any{
+		"command": command,
+	}
+	if timeout > 0 {
+		body["timeout"] = timeout
+	}
+
+	var resp ExecResponse
+	err := c.do("POST", "/apps/"+slug+"/exec", body, &resp)
 	return &resp, err
 }
 

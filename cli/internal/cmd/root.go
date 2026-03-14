@@ -39,6 +39,8 @@ func NewRootCmd(version string) *cobra.Command {
 	rootCmd.AddCommand(newLogsCmd())
 	rootCmd.AddCommand(newEnvCmd())
 	rootCmd.AddCommand(newFilesCmd())
+	rootCmd.AddCommand(newStorageCmd())
+	rootCmd.AddCommand(newExecCmd())
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newMCPCmd(version))
 

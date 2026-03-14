@@ -5,17 +5,22 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/phpless/cli/internal/config"
 	"github.com/phpless/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 func newLogsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "logs <slug>",
+	var appSlug string
+
+	cmd := &cobra.Command{
+		Use:   "logs",
 		Short: "Show recent access logs",
-		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			slug := args[0]
+			slug, err := config.ResolveAppSlug(appSlug)
+			if err != nil {
+				return err
+			}
 
 			client, err := requireAuth()
 			if err != nil {
@@ -55,4 +60,8 @@ func newLogsCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVar(&appSlug, "app", "", "App slug")
+
+	return cmd
 }
