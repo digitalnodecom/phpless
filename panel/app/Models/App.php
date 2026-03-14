@@ -29,6 +29,7 @@ class App extends Model
         'web_root',
         'persistent_paths',
         'workers',
+        'port_mappings',
     ];
 
     protected function casts(): array
@@ -41,6 +42,7 @@ class App extends Model
             'mercure_enabled' => 'boolean',
             'persistent_paths' => 'array',
             'workers' => 'array',
+            'port_mappings' => 'array',
         ];
     }
 

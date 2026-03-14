@@ -27,7 +27,7 @@ import (
 const (
 	configPath = "/etc/phpless-workers.json"
 	logDir     = "/var/log/phpless/workers"
-	listenAddr = "127.0.0.1:9111"
+	listenAddr = "0.0.0.0:9111"
 
 	minBackoff = 1 * time.Second
 	maxBackoff = 30 * time.Second
@@ -151,9 +151,21 @@ func (w *worker) run() {
 		w.mu.Unlock()
 
 		// Build command
-		cmd := exec.Command("sh", "-c", w.def.Command)
+		cmd := exec.Command("/bin/sh", "-c", w.def.Command)
 		cmd.Dir = w.def.Directory
-		cmd.Env = os.Environ()
+		// Inherit environment and ensure PATH includes common binary locations
+		env := os.Environ()
+		hasPath := false
+		for _, e := range env {
+			if len(e) > 5 && e[:5] == "PATH=" {
+				hasPath = true
+				break
+			}
+		}
+		if !hasPath {
+			env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+		}
+		cmd.Env = env
 
 		// Pipe stdout+stderr to log file with timestamps
 		pr, pw := io.Pipe()

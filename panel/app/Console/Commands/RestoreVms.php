@@ -43,6 +43,14 @@ class RestoreVms extends Command
                 $this->restoreApp($app, $vmManager, $envService);
                 $succeeded++;
                 $this->info("  [{$app->slug}] restored (vm_id={$app->vm_id}, ip={$app->vm_ip})");
+
+                // Reapply port forwarding rules
+                if (! empty($app->port_mappings) && $app->vm_ip) {
+                    try {
+                        $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings);
+                        $this->info("  [{$app->slug}] port mappings applied");
+                    } catch (\Throwable) {}
+                }
             } catch (\Throwable $e) {
                 $failed++;
                 $app->update(['vm_state' => 'error']);
@@ -103,7 +111,8 @@ class RestoreVms extends Command
         if (is_dir($buildDir)) {
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
-            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? []);
+            $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
+            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig);
             $newVmId = $result['vm_id'] ?? $vmId;
 
             $vm = $vmManager->waitForRunning($newVmId);
@@ -112,6 +121,7 @@ class RestoreVms extends Command
                 'vm_ip' => $vm['ip'] ?? null,
                 'vm_state' => 'running',
             ]);
+            $app->refresh();
 
             $this->line("    deployed code from {$buildDir}");
         }

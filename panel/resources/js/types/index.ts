@@ -96,12 +96,19 @@ export interface App {
     created_at: string;
     updated_at: string;
     workers: WorkerDef[] | null;
+    port_mappings: PortMapping[] | null;
     disk_used: number | null;
     disk_total: number | null;
     mem_used: number | null;
     cpu_pct: number | null;
     deployments?: Deployment[];
     domains?: Domain[];
+}
+
+export interface PortMapping {
+    external: number;
+    internal: number;
+    protocol: 'tcp' | 'udp';
 }
 
 export interface WorkerDef {

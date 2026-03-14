@@ -178,7 +178,7 @@ class AppController extends Controller
                 'type' => 'dir',
                 'size' => 0,
                 'modified_at' => date('Y-m-d H:i:s', filemtime($dir)),
-                'is_persistent' => false,
+                'is_persistent' => in_array($relPath, $persistentPaths, true),
             ];
         }
 
@@ -343,9 +343,15 @@ class AppController extends Controller
             } catch (\Throwable) {
                 $app->update(['vm_id' => $newVmId]);
             }
+            $app->refresh();
 
             // Update Caddy config with new VM IP
             $caddy->regenerateAndReload();
+
+            // Reapply port forwarding rules with the new VM IP
+            if (! empty($app->port_mappings) && $app->vm_ip) {
+                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings); } catch (\Throwable) {}
+            }
 
             $app->deployments()->create([
                 'triggered_by' => auth()->id(),
@@ -411,14 +417,75 @@ class AppController extends Controller
                 'vm_state' => $vm['state'] ?? 'running',
                 'vm_ip' => $vm['ip'] ?? $app->vm_ip,
             ]);
+            $app->refresh();
 
             $caddy->regenerateAndReload();
+
+            if (! empty($app->port_mappings) && $app->vm_ip) {
+                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings); } catch (\Throwable) {}
+            }
 
             return response()->json(['message' => 'VM resized and redeployed successfully.', 'resized' => true]);
         } catch (\Throwable $e) {
             $app->update(['vm_state' => 'error']);
             return response()->json(['message' => 'Resize failed: ' . $e->getMessage()], 500);
         }
+    }
+
+    public function updatePortMappings(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $validated = $request->validate([
+            'port_mappings' => ['present', 'array'],
+            'port_mappings.*.external' => ['required', 'integer', 'min:1', 'max:65535'],
+            'port_mappings.*.internal' => ['required', 'integer', 'min:1', 'max:65535'],
+            'port_mappings.*.protocol' => ['required', 'string', 'in:tcp,udp'],
+        ]);
+
+        $reserved = [22, 80, 443, 7474, 9111];
+        foreach ($validated['port_mappings'] as $mapping) {
+            if (in_array($mapping['external'], $reserved, true)) {
+                return response()->json([
+                    'message' => "Port {$mapping['external']} is reserved and cannot be forwarded.",
+                ], 422);
+            }
+        }
+
+        // Check for conflicts with other apps
+        $externalPorts = array_column($validated['port_mappings'], 'external');
+        if (count($externalPorts) > 0) {
+            $otherApps = App::where('id', '!=', $app->id)
+                ->whereNotNull('port_mappings')
+                ->get();
+
+            foreach ($otherApps as $other) {
+                foreach ($other->port_mappings ?? [] as $existing) {
+                    if (in_array($existing['external'], $externalPorts, true)) {
+                        return response()->json([
+                            'message' => "Port {$existing['external']} is already used by app '{$other->name}'.",
+                        ], 422);
+                    }
+                }
+            }
+        }
+
+        $app->update(['port_mappings' => $validated['port_mappings']]);
+
+        // Apply immediately if VM is running
+        if ($app->vm_ip && $app->vm_state === 'running') {
+            try {
+                if (empty($validated['port_mappings'])) {
+                    $vmManager->removePortMappings($app->vm_ip);
+                } else {
+                    $vmManager->applyPortMappings($app->vm_ip, $validated['port_mappings']);
+                }
+            } catch (\Throwable) {
+                // Save succeeded, rules will be applied on next deploy
+            }
+        }
+
+        return response()->json(['message' => 'Port mappings updated.']);
     }
 
     public function updateWorkers(Request $request, App $app): JsonResponse

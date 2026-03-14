@@ -1244,6 +1244,8 @@ function SettingsTab({ app }: { app: App }) {
                     <p className="text-muted-foreground text-sm">You have unsaved changes.</p>
                 )}
             </div>
+
+            <PortForwardingCard app={app} />
         </div>
     );
 }
@@ -1574,23 +1576,21 @@ function FileBrowserTab({ app, currentPath, onNavigate }: { app: App; currentPat
                                             <td className="text-muted-foreground py-1.5 pr-4 whitespace-nowrap">{item.modified_at}</td>
                                             <td className="py-1.5">
                                                 <div className="flex items-center gap-1">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleTogglePersistent(item)}
+                                                        title={item.is_persistent ? 'Persistent (survives redeploys — click to unpin)' : 'Not persistent (click to pin)'}
+                                                    >
+                                                        {item.is_persistent
+                                                            ? <Lock className="h-3 w-3 text-amber-500" />
+                                                            : <LockOpen className="text-muted-foreground h-3 w-3" />
+                                                        }
+                                                    </Button>
                                                     {item.type === 'file' && (
-                                                        <>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                onClick={() => handleTogglePersistent(item)}
-                                                                title={item.is_persistent ? 'Persistent (click to unpin)' : 'Not persistent (click to pin)'}
-                                                            >
-                                                                {item.is_persistent
-                                                                    ? <Lock className="h-3 w-3 text-amber-500" />
-                                                                    : <LockOpen className="text-muted-foreground h-3 w-3" />
-                                                                }
-                                                            </Button>
-                                                            <Button variant="ghost" size="sm" onClick={() => handleDownload(item)} title="Download">
-                                                                <Download className="h-3 w-3" />
-                                                            </Button>
-                                                        </>
+                                                        <Button variant="ghost" size="sm" onClick={() => handleDownload(item)} title="Download">
+                                                            <Download className="h-3 w-3" />
+                                                        </Button>
                                                     )}
                                                     <Button variant="ghost" size="sm" onClick={() => setDeletingItem(item)} title="Delete">
                                                         <Trash2 className="h-3 w-3" />
@@ -2067,6 +2067,132 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
     );
 }
 
+function PortForwardingCard({ app }: { app: App }) {
+    const [mappings, setMappings] = useState<Array<{ external: number; internal: number; protocol: 'tcp' | 'udp' }>>(
+        app.port_mappings ?? [],
+    );
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+    const [dirty, setDirty] = useState(false);
+
+    const addMapping = () => {
+        setMappings([...mappings, { external: 0, internal: 0, protocol: 'tcp' }]);
+        setDirty(true);
+    };
+
+    const removeMapping = (i: number) => {
+        setMappings(mappings.filter((_, idx) => idx !== i));
+        setDirty(true);
+    };
+
+    const updateMapping = (i: number, field: string, value: number | string) => {
+        const updated = [...mappings];
+        updated[i] = { ...updated[i], [field]: value };
+        setMappings(updated);
+        setDirty(true);
+    };
+
+    const save = async () => {
+        setSaving(true);
+        setMsg(null);
+        try {
+            const res = await fetch(`/apps/${app.id}/port-mappings`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') },
+                body: JSON.stringify({ port_mappings: mappings.filter((m) => m.external > 0 && m.internal > 0) }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setMsg({ text: data.message, type: 'success' });
+                setDirty(false);
+            } else {
+                setMsg({ text: data.message || 'Failed to save.', type: 'error' });
+            }
+        } catch {
+            setMsg({ text: 'Failed to save port mappings.', type: 'error' });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                    <Globe className="h-4 w-4" />
+                    Port Forwarding
+                </CardTitle>
+                <Button variant="outline" size="sm" onClick={addMapping}>
+                    <Plus className="mr-1 h-3 w-3" />
+                    Add Port
+                </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {msg && (
+                    <div className={`rounded-lg border p-3 ${msg.type === 'success' ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+                        <p className="text-sm">{msg.text}</p>
+                    </div>
+                )}
+
+                {mappings.length === 0 ? (
+                    <p className="text-muted-foreground text-sm">
+                        No ports forwarded. Add a mapping to expose a VM port on the server's public IP.
+                    </p>
+                ) : (
+                    <div className="space-y-2">
+                        {mappings.map((m, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                                <Input
+                                    type="number"
+                                    min={1}
+                                    max={65535}
+                                    value={m.external || ''}
+                                    onChange={(e) => updateMapping(i, 'external', parseInt(e.target.value) || 0)}
+                                    placeholder="External"
+                                    className="w-28 font-mono text-sm"
+                                />
+                                <ChevronRight className="text-muted-foreground h-4 w-4 shrink-0" />
+                                <Input
+                                    type="number"
+                                    min={1}
+                                    max={65535}
+                                    value={m.internal || ''}
+                                    onChange={(e) => updateMapping(i, 'internal', parseInt(e.target.value) || 0)}
+                                    placeholder="Internal"
+                                    className="w-28 font-mono text-sm"
+                                />
+                                <Select value={m.protocol} onValueChange={(v) => updateMapping(i, 'protocol', v)}>
+                                    <SelectTrigger className="w-20">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="tcp">TCP</SelectItem>
+                                        <SelectItem value="udp">UDP</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <Button variant="ghost" size="icon" onClick={() => removeMapping(i)}>
+                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <p className="text-muted-foreground text-xs">
+                    Forward ports on the server's public IP directly to your VM. Each external port can only be used by one app.
+                    Changes take effect immediately for running VMs.
+                </p>
+
+                {dirty && (
+                    <Button onClick={save} disabled={saving} size="sm">
+                        {saving ? 'Saving...' : 'Save Port Mappings'}
+                    </Button>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
 function WorkersTab({ app }: { app: App }) {
     const [defs, setDefs] = useState<WorkerDef[]>(app.workers ?? []);
     const [statuses, setStatuses] = useState<WorkerStatus[]>([]);
@@ -2111,7 +2237,7 @@ function WorkersTab({ app }: { app: App }) {
         setSaving(true);
         fetch(`/apps/${app.id}/workers`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '' },
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') },
             body: JSON.stringify({ workers: defs }),
         })
             .then((r) => r.json())
@@ -2223,54 +2349,69 @@ function WorkersTab({ app }: { app: App }) {
             </Card>
 
             {/* Live status */}
-            {statuses.length > 0 && (
+            {defs.length > 0 && (
                 <Card>
-                    <CardHeader>
+                    <CardHeader className="flex flex-row items-center justify-between">
                         <CardTitle>Live Status</CardTitle>
+                        {statuses.length > 0 && (
+                            <Badge variant="default" className="text-xs">
+                                {statuses.filter((s) => s.state === 'running').length}/{statuses.length} running
+                            </Badge>
+                        )}
                     </CardHeader>
                     <CardContent>
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="text-muted-foreground border-b text-left">
-                                    <th className="pb-2 pr-4">Name</th>
-                                    <th className="pb-2 pr-4">State</th>
-                                    <th className="pb-2 pr-4">PID</th>
-                                    <th className="pb-2 pr-4">Uptime</th>
-                                    <th className="pb-2 pr-4">Restarts</th>
-                                    <th className="pb-2">Logs</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {statuses.map((s, i) => (
-                                    <tr key={i} className="border-b last:border-0">
-                                        <td className="py-2 pr-4 font-mono text-xs">
-                                            {s.name}{s.index > 0 ? `:${s.index}` : ''}
-                                        </td>
-                                        <td className="py-2 pr-4">
-                                            <Badge variant={stateColor(s.state)}>{s.state}</Badge>
-                                        </td>
-                                        <td className="text-muted-foreground py-2 pr-4 font-mono text-xs">
-                                            {s.pid || '—'}
-                                        </td>
-                                        <td className="text-muted-foreground py-2 pr-4 text-xs">
-                                            {s.state === 'running' ? formatUptime(s.uptime_seconds) : '—'}
-                                        </td>
-                                        <td className="py-2 pr-4 text-xs">
-                                            {s.restarts > 0 ? (
-                                                <span className="text-orange-500">{s.restarts}</span>
-                                            ) : (
-                                                <span className="text-muted-foreground">0</span>
-                                            )}
-                                        </td>
-                                        <td className="py-2">
-                                            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => viewLogs(s.name, s.index)}>
-                                                View
-                                            </Button>
-                                        </td>
+                        {statuses.length === 0 ? (
+                            <div className="rounded-lg border-l-4 border-amber-400 bg-amber-50 p-4 dark:border-amber-500 dark:bg-amber-900/20">
+                                <p className="text-sm text-amber-800 dark:text-amber-200">
+                                    {app.vm_state !== 'running'
+                                        ? 'VM is not running. Start the app to see worker status.'
+                                        : 'No worker status available. Redeploy the app to start workers with the current configuration.'}
+                                </p>
+                            </div>
+                        ) : (
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-muted-foreground border-b text-left">
+                                        <th className="pb-2 pr-4">Name</th>
+                                        <th className="pb-2 pr-4">State</th>
+                                        <th className="pb-2 pr-4">PID</th>
+                                        <th className="pb-2 pr-4">Uptime</th>
+                                        <th className="pb-2 pr-4">Restarts</th>
+                                        <th className="pb-2">Logs</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    {statuses.map((s, i) => (
+                                        <tr key={i} className="border-b last:border-0">
+                                            <td className="py-2 pr-4 font-mono text-xs">
+                                                {s.name}{s.index > 0 ? `:${s.index}` : ''}
+                                            </td>
+                                            <td className="py-2 pr-4">
+                                                <Badge variant={stateColor(s.state)}>{s.state}</Badge>
+                                            </td>
+                                            <td className="text-muted-foreground py-2 pr-4 font-mono text-xs">
+                                                {s.pid || '—'}
+                                            </td>
+                                            <td className="text-muted-foreground py-2 pr-4 text-xs">
+                                                {s.state === 'running' ? formatUptime(s.uptime_seconds) : '—'}
+                                            </td>
+                                            <td className="py-2 pr-4 text-xs">
+                                                {s.restarts > 0 ? (
+                                                    <span className="text-orange-500">{s.restarts}</span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">0</span>
+                                                )}
+                                            </td>
+                                            <td className="py-2">
+                                                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => viewLogs(s.name, s.index)}>
+                                                    View
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
                     </CardContent>
                 </Card>
             )}

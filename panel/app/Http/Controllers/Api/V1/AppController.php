@@ -155,7 +155,8 @@ class AppController extends Controller
         try {
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? []);
+            $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig);
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {
@@ -168,8 +169,13 @@ class AppController extends Controller
             } catch (\Throwable) {
                 $app->update(['vm_id' => $newVmId]);
             }
+            $app->refresh();
 
             $caddy->regenerateAndReload();
+
+            if (! empty($app->port_mappings) && $app->vm_ip) {
+                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings); } catch (\Throwable) {}
+            }
 
             $app->deployments()->create([
                 'triggered_by' => $request->user()->id,
@@ -300,7 +306,7 @@ class AppController extends Controller
                 'type' => 'dir',
                 'size' => 0,
                 'modified_at' => date('Y-m-d H:i:s', filemtime($dir)),
-                'is_persistent' => false,
+                'is_persistent' => in_array($relPath, $persistentPaths, true),
             ];
         }
 

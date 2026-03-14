@@ -125,6 +125,25 @@ class VMManagerClient
         return $response->json('lines', []);
     }
 
+    public function applyPortMappings(string $vmIp, array $mappings): void
+    {
+        $response = $this->request()->post('/port-mappings', [
+            'vm_ip' => $vmIp,
+            'mappings' => $mappings,
+        ]);
+
+        if ($response->failed()) {
+            throw new RuntimeException("Failed to apply port mappings: {$response->body()}");
+        }
+    }
+
+    public function removePortMappings(string $vmIp): void
+    {
+        $this->request()->delete('/port-mappings', [
+            'vm_ip' => $vmIp,
+        ]);
+    }
+
     public function getWorkerStatus(string $vmIp): array
     {
         $response = $this->request()->timeout(5)->get("/workers/status", ['vm_ip' => $vmIp]);

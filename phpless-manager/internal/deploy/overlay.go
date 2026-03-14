@@ -36,11 +36,8 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 	os.MkdirAll(upperApp, 0755)
 	os.MkdirAll(workDir, 0755)
 
-	// Build rsync args: always exclude Laravel runtime dirs, plus per-file persistent paths
-	rsyncArgs := []string{"-a", "--delete",
-		"--exclude=storage/framework",
-		"--exclude=storage/logs",
-	}
+	// Build rsync args: persistent paths are excluded so they survive redeploys
+	rsyncArgs := []string{"-a", "--delete"}
 	for _, p := range persistentPaths {
 		rsyncArgs = append(rsyncArgs, "--exclude="+p)
 	}
@@ -91,6 +88,12 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 }
 
 // DeployToRootfs mounts a tenant's rootfs image and syncs app code into /app/.
+// initScriptPath is the canonical location of the init script on the host.
+// It gets synced into tenant rootfs images on every deploy so that init
+// improvements (SSH, workers, overlay logging, etc.) propagate without
+// requiring a full rootfs rebuild.
+var InitScriptPath = "/srv/firecracker/base/rootfs/init"
+
 func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string) error {
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs image not found: %s", rootfsPath)
@@ -111,14 +114,23 @@ func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envCont
 	}
 	defer runCmd("umount", mountDir)
 
+	// Sync init script and worker manager from base rootfs so improvements
+	// propagate to existing VMs without requiring a full rootfs rebuild.
+	baseDir := filepath.Dir(InitScriptPath) // e.g. /srv/firecracker/base/rootfs
+	if initData, err := os.ReadFile(InitScriptPath); err == nil {
+		os.WriteFile(filepath.Join(mountDir, "init"), initData, 0755)
+	}
+	workersBin := filepath.Join(baseDir, "usr", "local", "bin", "phpless-workers")
+	if binData, err := os.ReadFile(workersBin); err == nil {
+		os.MkdirAll(filepath.Join(mountDir, "usr", "local", "bin"), 0755)
+		os.WriteFile(filepath.Join(mountDir, "usr", "local", "bin", "phpless-workers"), binData, 0755)
+	}
+
 	appDir2 := filepath.Join(mountDir, "app")
 	os.MkdirAll(appDir2, 0755)
 
-	// Build rsync args: always exclude Laravel runtime dirs, plus per-file persistent paths
-	rsyncArgs := []string{"-a", "--delete",
-		"--exclude=storage/framework",
-		"--exclude=storage/logs",
-	}
+	// Build rsync args: persistent paths are excluded so they survive redeploys
+	rsyncArgs := []string{"-a", "--delete"}
 	for _, p := range persistentPaths {
 		rsyncArgs = append(rsyncArgs, "--exclude="+p)
 	}

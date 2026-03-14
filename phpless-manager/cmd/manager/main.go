@@ -115,8 +115,13 @@ func main() {
 		}
 	}()
 
+	// Initialize port forwarder — detect external interface from default route
+	extIface := detectExternalInterface()
+	portFwd := network.NewPortForwarder(extIface, *bridgeName)
+	log.WithField("interface", extIface).Info("Port forwarder initialized")
+
 	// Create API server
-	server := api.NewServer(manager, termStore, sshSigner)
+	server := api.NewServer(manager, termStore, sshSigner, portFwd)
 
 	// Remove old socket if it exists
 	os.Remove(*socketPath)
@@ -160,10 +165,28 @@ func main() {
 
 	<-ctx.Done()
 
+	// Clean up port forwarding rules before stopping VMs
+	portFwd.RemoveAll()
+
 	// Clean up all VMs
 	log.Info("Stopping all VMs...")
 	manager.StopAll()
 	bridge.Destroy()
 
 	log.Info("PHPless VM Manager stopped")
+}
+
+// detectExternalInterface finds the network interface used for the default route.
+func detectExternalInterface() string {
+	out, err := exec.Command("ip", "route", "show", "default").Output()
+	if err == nil {
+		// Output: "default via X.X.X.X dev enp8s0 ..."
+		fields := strings.Fields(string(out))
+		for i, f := range fields {
+			if f == "dev" && i+1 < len(fields) {
+				return fields[i+1]
+			}
+		}
+	}
+	return "eth0" // fallback
 }

@@ -276,6 +276,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/files/persistent', [AppController::class, 'setPersistent'])->name('apps.files.persistent');
     Route::put('apps/{app}/rename', [AppController::class, 'rename'])->name('apps.rename');
     Route::put('apps/{app}/settings', [AppController::class, 'updateSettings'])->name('apps.settings.update');
+    Route::put('apps/{app}/port-mappings', [AppController::class, 'updatePortMappings'])->name('apps.port-mappings.update');
     Route::put('apps/{app}/workers', [AppController::class, 'updateWorkers'])->name('apps.workers.update');
     Route::get('apps/{app}/workers/status', [AppController::class, 'workerStatus'])->name('apps.workers.status');
     Route::get('apps/{app}/workers/logs', [AppController::class, 'workerLogs'])->name('apps.workers.logs');

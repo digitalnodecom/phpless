@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/phpless/phpless-manager/internal/deploy"
+	"github.com/phpless/phpless-manager/internal/network"
 	"github.com/phpless/phpless-manager/internal/terminal"
 	"github.com/phpless/phpless-manager/internal/vm"
 	log "github.com/sirupsen/logrus"
@@ -27,11 +28,12 @@ type Server struct {
 	manager      *vm.Manager
 	termSessions *terminal.Store
 	sshSigner    ssh.Signer
+	portFwd      *network.PortForwarder
 }
 
 // NewServer creates a new API server.
-func NewServer(manager *vm.Manager, termSessions *terminal.Store, sshSigner ssh.Signer) *Server {
-	return &Server{manager: manager, termSessions: termSessions, sshSigner: sshSigner}
+func NewServer(manager *vm.Manager, termSessions *terminal.Store, sshSigner ssh.Signer, portFwd *network.PortForwarder) *Server {
+	return &Server{manager: manager, termSessions: termSessions, sshSigner: sshSigner, portFwd: portFwd}
 }
 
 // Router returns the chi router with all API routes registered.
@@ -59,6 +61,8 @@ func (s *Server) Router() *chi.Mux {
 		r.Post("/terminal-sessions", s.createTerminalSession)
 		r.Get("/workers/status", s.proxyWorkerStatus)
 		r.Get("/workers/logs/*", s.proxyWorkerLogs)
+		r.Post("/port-mappings", s.applyPortMappings)
+		r.Delete("/port-mappings", s.removePortMappings)
 	})
 
 	// Exec has its own timeout (up to 5 min)
@@ -323,6 +327,39 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := s.termSessions.Create(req.VmIP, 60*time.Second)
 	respondJSON(w, http.StatusOK, map[string]string{"session_id": sessionID})
+}
+
+// applyPortMappings sets up iptables DNAT rules for a VM.
+func (s *Server) applyPortMappings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		VMIP     string                `json:"vm_ip"`
+		Mappings []network.PortMapping `json:"mappings"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VMIP == "" {
+		httpError(w, http.StatusBadRequest, "vm_ip and mappings required")
+		return
+	}
+
+	if err := s.portFwd.Apply(req.VMIP, req.Mappings); err != nil {
+		httpError(w, http.StatusInternalServerError, "failed to apply port mappings: %v", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "applied"})
+}
+
+// removePortMappings removes all iptables rules for a VM.
+func (s *Server) removePortMappings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		VMIP string `json:"vm_ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VMIP == "" {
+		httpError(w, http.StatusBadRequest, "vm_ip required")
+		return
+	}
+
+	s.portFwd.Remove(req.VMIP)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // proxyWorkerStatus proxies a status request to the worker manager inside a VM.

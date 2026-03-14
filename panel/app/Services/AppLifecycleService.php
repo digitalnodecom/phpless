@@ -62,6 +62,13 @@ class AppLifecycleService
             }
         }
 
+        // Clean up port forwarding rules
+        if ($app->vm_ip && ! empty($app->port_mappings)) {
+            try {
+                $this->vmManager->removePortMappings($app->vm_ip);
+            } catch (\Throwable) {}
+        }
+
         // Clean up the build directory
         $buildDir = base_path("../builds/{$app->slug}");
         if (File::isDirectory($buildDir)) {
