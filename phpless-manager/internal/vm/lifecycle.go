@@ -3,8 +3,10 @@ package vm
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -32,10 +34,12 @@ type VM struct {
 	StartedAt time.Time
 	PID       int
 	Error     string
+	LogPath   string // Path to the per-VM console log file
 
 	machine *firecracker.Machine
 	cancel  context.CancelFunc
 	tap     *network.TAPDevice
+	logFile *os.File // open handle, closed on stop/destroy
 }
 
 // Manager handles the lifecycle of multiple Firecracker microVMs.
@@ -103,6 +107,16 @@ func (m *Manager) Create(cfg VMConfig) (*VM, error) {
 		return nil, fmt.Errorf("prepare rootfs: %w", err)
 	}
 
+	// Open per-VM console log file
+	var vmLogFile *os.File
+	var vmLogPath string
+	if m.config.LogDir != "" {
+		if err := os.MkdirAll(m.config.LogDir, 0755); err == nil {
+			vmLogPath = filepath.Join(m.config.LogDir, cfg.ID+".log")
+			vmLogFile, _ = os.OpenFile(vmLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		}
+	}
+
 	// Build Firecracker machine config
 	socketPath := cfg.SocketPath(m.config.SocketDir)
 	os.Remove(socketPath) // Clean up stale socket
@@ -165,19 +179,38 @@ func (m *Manager) Create(cfg VMConfig) (*VM, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	machine, err := firecracker.NewMachine(ctx, fcConfig)
+	// Build machine options — redirect serial console to a per-VM log file
+	var machineOpts []firecracker.Opt
+	if vmLogFile != nil {
+		writer := io.MultiWriter(os.Stdout, vmLogFile)
+		cmd := firecracker.VMCommandBuilder{}.
+			WithBin("firecracker").
+			WithSocketPath(socketPath).
+			AddArgs("--no-seccomp").
+			WithStdout(writer).
+			WithStderr(writer).
+			Build(ctx)
+		machineOpts = append(machineOpts, firecracker.WithProcessRunner(cmd))
+	}
+
+	machine, err := firecracker.NewMachine(ctx, fcConfig, machineOpts...)
 	if err != nil {
 		cancel()
 		tap.Destroy()
+		if vmLogFile != nil {
+			vmLogFile.Close()
+		}
 		return nil, fmt.Errorf("create machine: %w", err)
 	}
 
 	vm := &VM{
 		Config:  cfg,
 		State:   StateStarting,
+		LogPath: vmLogPath,
 		machine: machine,
 		cancel:  cancel,
 		tap:     tap,
+		logFile: vmLogFile,
 	}
 
 	m.vms[cfg.ID] = vm
@@ -254,6 +287,12 @@ func (m *Manager) Stop(id string) error {
 		v.tap.Destroy()
 	}
 
+	// Close log file
+	if v.logFile != nil {
+		v.logFile.Close()
+		v.logFile = nil
+	}
+
 	// Release IP
 	m.bridge.ReleaseAddress(v.Config.IP)
 
@@ -324,6 +363,16 @@ func (m *Manager) GetBySlug(slug string) (*VM, error) {
 		}
 	}
 	return nil, fmt.Errorf("no VM found for slug %s", slug)
+}
+
+// TenantDir returns the directory where per-VM disk images are stored.
+func (m *Manager) TenantDir() string {
+	return m.config.TenantDir
+}
+
+// BaseExt4Path returns the path to the shared base rootfs image.
+func (m *Manager) BaseExt4Path() string {
+	return m.config.BaseExt4Path
 }
 
 // StopAll stops all running VMs (used during shutdown).
@@ -409,17 +458,75 @@ func (m *Manager) prepareRootfs(cfg VMConfig) (string, error) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return "", fmt.Errorf("format overlay: %s: %w", string(out), err)
 			}
+			// Inject SSH public key into the fresh overlay upper layer
+			if m.config.SSHPubKey != "" {
+				if err := injectSSHKey(overlayPath, m.config.SSHPubKey, true); err != nil {
+					log.WithError(err).Warn("Failed to inject SSH key into overlay")
+				}
+			}
 		}
 		return overlayPath, nil
 	}
 
 	// Non-overlay: copy the base ext4 image (skip if already exists)
 	rootfsPath := cfg.RootfsPath(m.config.TenantDir)
+	fresh := false
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		cmd := exec.Command("cp", m.config.BaseExt4Path, rootfsPath)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("copy rootfs: %s: %w", string(out), err)
 		}
+		fresh = true
+
+		// Resize tenant rootfs to target size if configured
+		if m.config.RootfsSizeMiB > 0 {
+			seek := fmt.Sprintf("seek=%dM", m.config.RootfsSizeMiB)
+			if out, err := exec.Command("dd", "if=/dev/zero", "of="+rootfsPath, "bs=1", "count=0", seek).CombinedOutput(); err != nil {
+				log.WithError(err).WithField("output", string(out)).Warn("Failed to extend rootfs file")
+			} else if out, err := exec.Command("e2fsck", "-f", "-y", rootfsPath).CombinedOutput(); err != nil && err.(*exec.ExitError).ExitCode() > 1 {
+				log.WithError(err).WithField("output", string(out)).Warn("e2fsck failed on rootfs")
+			} else if out, err := exec.Command("resize2fs", rootfsPath).CombinedOutput(); err != nil {
+				log.WithError(err).WithField("output", string(out)).Warn("resize2fs failed on rootfs")
+			}
+		}
+	}
+	// Inject SSH public key into fresh rootfs copies
+	if fresh && m.config.SSHPubKey != "" {
+		if err := injectSSHKey(rootfsPath, m.config.SSHPubKey, false); err != nil {
+			log.WithError(err).Warn("Failed to inject SSH key into rootfs")
+		}
 	}
 	return rootfsPath, nil
+}
+
+// injectSSHKey mounts an ext4 image and writes pubKey to /root/.ssh/authorized_keys.
+// For overlay images (isOverlay=true), it writes to upper/root/.ssh/ (the writable layer).
+func injectSSHKey(imagePath, pubKey string, isOverlay bool) error {
+	mountDir, err := os.MkdirTemp("", "phpless-sshkey-*")
+	if err != nil {
+		return fmt.Errorf("create mount dir: %w", err)
+	}
+	defer os.RemoveAll(mountDir)
+
+	cmd := exec.Command("mount", "-o", "loop", imagePath, mountDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("mount image: %s: %w", string(out), err)
+	}
+	defer exec.Command("umount", mountDir).Run() //nolint:errcheck
+
+	var sshDir string
+	if isOverlay {
+		sshDir = filepath.Join(mountDir, "upper", "root", ".ssh")
+	} else {
+		sshDir = filepath.Join(mountDir, "root", ".ssh")
+	}
+
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return fmt.Errorf("create .ssh dir: %w", err)
+	}
+	keyPath := filepath.Join(sshDir, "authorized_keys")
+	if err := os.WriteFile(keyPath, []byte(pubKey), 0600); err != nil {
+		return fmt.Errorf("write authorized_keys: %w", err)
+	}
+	return nil
 }

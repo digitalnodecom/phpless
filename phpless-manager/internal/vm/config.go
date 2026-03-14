@@ -7,11 +7,14 @@ import (
 
 // ManagerConfig holds static configuration for the VM manager.
 type ManagerConfig struct {
-	KernelPath   string
-	BaseSqfsPath string
-	BaseExt4Path string
-	TenantDir    string
-	SocketDir    string
+	KernelPath     string
+	BaseSqfsPath   string
+	BaseExt4Path   string
+	TenantDir      string
+	SocketDir      string
+	LogDir         string // Directory for per-VM console log files
+	SSHPubKey      string // authorized_keys content injected into each VM for terminal access
+	RootfsSizeMiB  int    // Size to resize each tenant rootfs copy to (0 = no resize)
 }
 
 // VMConfig holds the configuration for a single microVM.
@@ -33,7 +36,7 @@ func DefaultVMConfig(id, slug string) VMConfig {
 		ID:     id,
 		Slug:   slug,
 		VCPUs:  1,
-		MemMiB: 128,
+		MemMiB: 256,
 		Subnet: "255.255.0.0",
 		Overlay: false,
 	}
@@ -57,7 +60,7 @@ func (c VMConfig) RootfsPath(tenantDir string) string {
 // BootArgs returns kernel boot arguments for this VM.
 func (c VMConfig) BootArgs() string {
 	args := fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw ip=%s::%s:%s::eth0:off",
+		"console=ttyS0 reboot=k panic=1 pci=off init=/init root=/dev/vda rw ip=%s::%s:%s::eth0:off",
 		c.IP, c.GatewayIP, c.Subnet,
 	)
 	if c.Overlay {

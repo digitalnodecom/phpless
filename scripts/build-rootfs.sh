@@ -7,8 +7,12 @@ ROOTFS_IMG="/srv/firecracker/base/rootfs-base.ext4"
 ROOTFS_SQFS="/srv/firecracker/base/rootfs-base.sqfs"
 KERNEL_DIR="/srv/firecracker/base/kernel"
 FRANKENPHP_VERSION="1.4.2"
-KERNEL_VERSION="5.10"
 IMG_SIZE_MB=512
+
+# Kernel 4.14.174 — the only version confirmed working with Firecracker 1.10.1.
+# 5.10 kernels fail with "virtio_blk: probe of virtio0 failed with error -22".
+KERNEL_URL="https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin"
+KERNEL_FILE="${KERNEL_DIR}/vmlinux.bin"
 
 echo "=== Building PHPless Base RootFS ==="
 
@@ -18,11 +22,10 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # 1. Download kernel
-echo "[1/5] Downloading Firecracker-compatible kernel..."
-KERNEL_URL="https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux-${KERNEL_VERSION}.bin"
-if [[ ! -f "${KERNEL_DIR}/vmlinux-${KERNEL_VERSION}" ]]; then
-    curl -sL "$KERNEL_URL" -o "${KERNEL_DIR}/vmlinux-${KERNEL_VERSION}"
-    echo "  Kernel downloaded: ${KERNEL_DIR}/vmlinux-${KERNEL_VERSION} ✓"
+echo "[1/5] Downloading Firecracker-compatible kernel (4.14)..."
+if [[ ! -f "${KERNEL_FILE}" ]]; then
+    curl -sL "$KERNEL_URL" -o "${KERNEL_FILE}"
+    echo "  Kernel downloaded: ${KERNEL_FILE} ✓"
 else
     echo "  Kernel already exists ✓"
 fi
@@ -44,6 +47,12 @@ curl -sL "$FRANKENPHP_URL" -o "${ROOTFS_DIR}/usr/local/bin/frankenphp"
 chmod +x "${ROOTFS_DIR}/usr/local/bin/frankenphp"
 echo "  FrankenPHP downloaded ✓"
 
+# Static PHP CLI (matches FrankenPHP's embedded PHP version for artisan/workers)
+PHP_CLI_URL="https://dl.static-php.dev/static-php-cli/common/php-8.4.12-cli-linux-x86_64.tar.gz"
+curl -sL "$PHP_CLI_URL" | tar -xz -C "${ROOTFS_DIR}/usr/local/bin/"
+chmod +x "${ROOTFS_DIR}/usr/local/bin/php"
+echo "  PHP CLI downloaded ✓"
+
 # 4. Install configs into rootfs
 echo "[4/5] Installing configs..."
 
@@ -51,9 +60,14 @@ echo "[4/5] Installing configs..."
 mkdir -p "${ROOTFS_DIR}/etc/php"
 cp /var/www/phpless/configs/php.ini "${ROOTFS_DIR}/etc/php/php.ini"
 
-# Custom init script
-cp /var/www/phpless/rootfs/init "${ROOTFS_DIR}/sbin/init"
-chmod +x "${ROOTFS_DIR}/sbin/init"
+# Custom init script (kernel boots /init via init=/init boot arg)
+cp /var/www/phpless/rootfs/init "${ROOTFS_DIR}/init"
+chmod +x "${ROOTFS_DIR}/init"
+ln -sf /init "${ROOTFS_DIR}/sbin/init"
+
+# Entropy seeder (required for FrankenPHP/Go on 4.14 kernel — blocks on getrandom without it)
+gcc -static -o "${ROOTFS_DIR}/usr/local/bin/add_entropy" /var/www/phpless/rootfs/add_entropy.c
+chmod +x "${ROOTFS_DIR}/usr/local/bin/add_entropy"
 
 # FrankenPHP Caddyfile
 mkdir -p "${ROOTFS_DIR}/etc/frankenphp"
@@ -108,6 +122,6 @@ echo ""
 echo "=== RootFS Build Complete ==="
 echo "  ext4:     $ROOTFS_IMG ($(du -sh "$ROOTFS_IMG" | cut -f1))"
 echo "  squashfs: $ROOTFS_SQFS ($(du -sh "$ROOTFS_SQFS" | cut -f1))"
-echo "  kernel:   ${KERNEL_DIR}/vmlinux-${KERNEL_VERSION}"
+echo "  kernel:   ${KERNEL_FILE}"
 echo ""
 echo "Next: Run scripts/create-vm.sh to boot a test VM"

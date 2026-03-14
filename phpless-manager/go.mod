@@ -1,12 +1,16 @@
 module github.com/phpless/phpless-manager
 
-go 1.23
+go 1.24.0
+
+toolchain go1.24.4
 
 require (
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/sirupsen/logrus v1.9.3
+	golang.org/x/crypto v0.48.0
 )
 
 require (
@@ -38,8 +42,8 @@ require (
 	github.com/vishvananda/netlink v1.1.1-0.20210330154013-f5de75959ad5 // indirect
 	github.com/vishvananda/netns v0.0.0-20210104183010-2eb08e3e575f // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
-	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd // indirect
-	golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8 // indirect
-	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

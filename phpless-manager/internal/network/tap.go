@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // TAPDevice represents a TAP network device attached to a bridge.
@@ -50,6 +51,27 @@ func (t *TAPDevice) Name() string {
 // Destroy removes the TAP device.
 func (t *TAPDevice) Destroy() error {
 	return run("ip", "link", "del", t.name)
+}
+
+// CleanupStaleTAPs removes all tap-* interfaces attached to the given bridge.
+// Call this on startup before creating any VMs to clear state from a previous run.
+func CleanupStaleTAPs(bridgeName string) {
+	out, err := exec.Command("ip", "link", "show", "master", bridgeName).Output()
+	if err != nil {
+		return
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		// Lines look like: "133: tap-abc12345: <BROADCAST,...>"
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.TrimSuffix(fields[1], ":")
+		if strings.HasPrefix(name, "tap-") {
+			exec.Command("ip", "link", "del", name).Run()
+		}
+	}
 }
 
 // tapName generates a TAP device name from a VM ID.

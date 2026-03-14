@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"sync"
 )
@@ -45,8 +46,11 @@ func NewBridge(name, cidr string) (*Bridge, error) {
 func (b *Bridge) create() error {
 	// Check if bridge already exists
 	if _, err := net.InterfaceByName(b.name); err == nil {
-		// Bridge exists, just ensure it's up
-		return run("ip", "link", "set", b.name, "up")
+		// Bridge exists, ensure it's up and forward rules are in place
+		run("ip", "link", "set", b.name, "up")
+		b.ensureForwardRules()
+		b.blockVMToVM()
+		return nil
 	}
 
 	// Create bridge
@@ -71,6 +75,12 @@ func (b *Bridge) create() error {
 	}
 
 	run("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", mainIface, "-j", "MASQUERADE")
+
+	// Allow forwarding for bridge subnet (works even when UFW FORWARD policy is DROP)
+	b.ensureForwardRules()
+
+	// Block VM-to-VM traffic
+	b.blockVMToVM()
 
 	return nil
 }
@@ -158,6 +168,51 @@ func splitFields(s string) []string {
 		fields = append(fields, current)
 	}
 	return fields
+}
+
+// ensureForwardRules idempotently inserts an iptables FORWARD rule that allows
+// all traffic originating from the bridge subnet to be forwarded. This is
+// required when UFW (or any firewall) sets the FORWARD chain policy to DROP.
+// Uses -C (check) before -I (insert) to avoid duplicate rules.
+func (b *Bridge) ensureForwardRules() {
+	// Derive subnet (e.g. "10.0.0.0/16") from the bridge CIDR
+	_, ipNet, err := net.ParseCIDR(b.cidr)
+	if err != nil {
+		return
+	}
+	subnet := ipNet.String()
+
+	// Check if the rule already exists before inserting
+	check := exec.Command("iptables", "-C", "FORWARD", "-s", subnet, "-j", "ACCEPT")
+	if check.Run() != nil {
+		// Rule missing — insert at position 1 so it fires before any DROP rules
+		run("iptables", "-I", "FORWARD", "1", "-s", subnet, "-j", "ACCEPT")
+	}
+}
+
+// blockVMToVM prevents direct VM-to-VM traffic by dropping packets that are
+// being L2-switched within the bridge. VMs can still reach the host (gateway)
+// and the internet via NAT, but cannot reach each other's internal IPs.
+//
+// This works by loading the br_netfilter kernel module so that bridged packets
+// pass through iptables, then inserting a FORWARD rule that matches only
+// packets being physically switched between bridge ports (not routed packets).
+func (b *Bridge) blockVMToVM() {
+	// Load br_netfilter so iptables can inspect bridged traffic.
+	exec.Command("modprobe", "br_netfilter").Run() //nolint:errcheck
+
+	// Enable iptables processing for bridged IPv4 packets.
+	os.WriteFile("/proc/sys/net/bridge/bridge-nf-call-iptables", []byte("1"), 0644) //nolint:errcheck
+
+	// Drop any packet being switched between bridge ports (VM→VM).
+	// --physdev-is-bridged matches only L2-switched traffic, never routed traffic,
+	// so VM→internet and host→VM paths are unaffected.
+	check := exec.Command("iptables", "-C", "FORWARD",
+		"-m", "physdev", "--physdev-is-bridged", "-j", "DROP")
+	if check.Run() != nil {
+		run("iptables", "-I", "FORWARD", "1",
+			"-m", "physdev", "--physdev-is-bridged", "-j", "DROP")
+	}
 }
 
 // run executes a command and returns any error.

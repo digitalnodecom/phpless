@@ -17,7 +17,11 @@ hostname phpless || true
 ip link set lo up || true
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "nameserver 1.1.1.1" >> /etc/resolv.conf
-mkdir -p /tmp/sessions
+mkdir -p /tmp/sessions \
+    /app/storage/framework/views \
+    /app/storage/framework/cache/data \
+    /app/storage/framework/sessions \
+    /app/storage/logs
 
 # Seed entropy using RNDADDENTROPY ioctl - critical for FrankenPHP/Go in Firecracker
 echo "[phpless-init] Seeding entropy..."
@@ -38,27 +42,62 @@ for param in $(cat /proc/cmdline); do
 done
 
 # Set up overlay filesystem if second drive is present
-if [ "$OVERLAY" = "1" ] && [ -b /dev/vdb ]; then
-    echo "[phpless-init] Setting up overlay filesystem..."
-    mkdir -p /mnt/overlay
-    mount /dev/vdb /mnt/overlay
-    mkdir -p /mnt/overlay/upper /mnt/overlay/work
-    if [ -d /mnt/overlay/upper/app ]; then
-        mount -t overlay overlay \
-            -o lowerdir=/app,upperdir=/mnt/overlay/upper/app,workdir=/mnt/overlay/work \
-            /app
-        echo "[phpless-init] Overlay mounted for /app"
+if [ "$OVERLAY" = "1" ]; then
+    if [ ! -b /dev/vdb ]; then
+        echo "[phpless-init] WARNING: overlay=1 but /dev/vdb not found, falling back to rootfs"
+    else
+        echo "[phpless-init] Setting up overlay filesystem..."
+        mkdir -p /mnt/overlay
+        if ! mount /dev/vdb /mnt/overlay; then
+            echo "[phpless-init] ERROR: failed to mount /dev/vdb"
+        elif [ ! -d /mnt/overlay/upper/app ]; then
+            echo "[phpless-init] WARNING: /mnt/overlay/upper/app missing, first deploy needed"
+        else
+            mkdir -p /mnt/overlay/work
+            mount -t overlay overlay \
+                -o lowerdir=/app,upperdir=/mnt/overlay/upper/app,workdir=/mnt/overlay/work \
+                /app
+            echo "[phpless-init] Overlay mounted for /app"
+        fi
     fi
 else
     echo "[phpless-init] Running without overlay (single rootfs mode)"
 fi
 
-# Load .env if present
-if [ -f /app/.env ]; then
+# Load platform-injected env vars (written by deploy process, never committed by user)
+if [ -f /etc/phpless.env ]; then
     set -a
-    . /app/.env
+    . /etc/phpless.env
     set +a
-    echo "[phpless-init] Loaded /app/.env"
+    echo "[phpless-init] Loaded /etc/phpless.env"
+fi
+
+# Load /app/storage/.env if present (user-managed persistent overrides, takes precedence)
+if [ -f /app/storage/.env ]; then
+    set -a
+    . /app/storage/.env
+    set +a
+    echo "[phpless-init] Loaded /app/storage/.env"
+fi
+
+# Use app-specific Caddyfile if present
+if [ -f /app/.caddyfile ]; then
+    cp /app/.caddyfile /etc/frankenphp/Caddyfile
+    echo "[phpless-init] Using app-specific Caddyfile"
+fi
+
+# Start SSH server if manager has injected an authorised key
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+mkdir -p /run/sshd && chmod 755 /run/sshd
+if [ -f /root/.ssh/authorized_keys ]; then
+    chmod 600 /root/.ssh/authorized_keys
+    /usr/sbin/sshd &
+fi
+
+# Start worker manager if config exists (runs in background, HTTP status on :9111)
+if [ -f /etc/phpless-workers.json ]; then
+    /usr/local/bin/phpless-workers &
+    echo "[phpless-init] Worker manager started"
 fi
 
 echo "[phpless-init] Starting FrankenPHP on :8080..."

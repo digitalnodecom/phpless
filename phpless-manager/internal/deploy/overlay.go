@@ -8,7 +8,7 @@ import (
 )
 
 // DeployToOverlay mounts a tenant's overlay image and syncs app code into it.
-func DeployToOverlay(overlayPath, appDir, envContent string) error {
+func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string) error {
 	if _, err := os.Stat(overlayPath); os.IsNotExist(err) {
 		return fmt.Errorf("overlay image not found: %s", overlayPath)
 	}
@@ -36,27 +36,62 @@ func DeployToOverlay(overlayPath, appDir, envContent string) error {
 	os.MkdirAll(upperApp, 0755)
 	os.MkdirAll(workDir, 0755)
 
-	// Rsync app code into overlay
-	if err := runCmd("rsync", "-a", "--delete",
-		appDir+"/",
-		upperApp+"/",
-	); err != nil {
+	// Build rsync args: always exclude Laravel runtime dirs, plus per-file persistent paths
+	rsyncArgs := []string{"-a", "--delete",
+		"--exclude=storage/framework",
+		"--exclude=storage/logs",
+	}
+	for _, p := range persistentPaths {
+		rsyncArgs = append(rsyncArgs, "--exclude="+p)
+	}
+	rsyncArgs = append(rsyncArgs, appDir+"/", upperApp+"/")
+
+	if err := runCmd("rsync", rsyncArgs...); err != nil {
 		return fmt.Errorf("rsync app code: %w", err)
 	}
 
-	// Write .env file if env content provided
+	// Write env vars to /etc/phpless.env (not /app/.env — avoids collision with app's own .env)
+	etcDir := filepath.Join(mountDir, "etc")
+	os.MkdirAll(etcDir, 0755)
 	if envContent != "" {
-		envPath := filepath.Join(upperApp, ".env")
-		if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
-			return fmt.Errorf("write .env: %w", err)
+		envPath := filepath.Join(etcDir, "phpless.env")
+		if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
+			return fmt.Errorf("write phpless.env: %w", err)
 		}
 	}
+
+	// Write .caddyfile if content provided
+	if caddyfileContent != "" {
+		caddyPath := filepath.Join(upperApp, ".caddyfile")
+		if err := os.WriteFile(caddyPath, []byte(caddyfileContent), 0644); err != nil {
+			return fmt.Errorf("write .caddyfile: %w", err)
+		}
+	}
+
+	// Write workers config to /etc/phpless-workers.json
+	if workersConfig != "" {
+		workersPath := filepath.Join(etcDir, "phpless-workers.json")
+		if err := os.WriteFile(workersPath, []byte(workersConfig), 0644); err != nil {
+			return fmt.Errorf("write phpless-workers.json: %w", err)
+		}
+	} else {
+		// Remove stale config if workers were removed
+		os.Remove(filepath.Join(etcDir, "phpless-workers.json"))
+	}
+
+	// Create /app/storage structure in overlay upper layer
+	upperStorage := filepath.Join(mountDir, "upper", "app", "storage")
+	os.MkdirAll(upperStorage, 0777)
+	os.MkdirAll(filepath.Join(upperStorage, "framework", "views"), 0777)
+	os.MkdirAll(filepath.Join(upperStorage, "framework", "cache", "data"), 0777)
+	os.MkdirAll(filepath.Join(upperStorage, "framework", "sessions"), 0777)
+	os.MkdirAll(filepath.Join(upperStorage, "logs"), 0777)
 
 	return nil
 }
 
-// DeployToRootfs mounts a tenant's rootfs image and syncs app code into /app/public/.
-func DeployToRootfs(rootfsPath, appDir, envContent string) error {
+// DeployToRootfs mounts a tenant's rootfs image and syncs app code into /app/.
+func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string) error {
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs image not found: %s", rootfsPath)
 	}
@@ -76,23 +111,56 @@ func DeployToRootfs(rootfsPath, appDir, envContent string) error {
 	}
 	defer runCmd("umount", mountDir)
 
-	appPublic := filepath.Join(mountDir, "app", "public")
-	os.MkdirAll(appPublic, 0755)
+	appDir2 := filepath.Join(mountDir, "app")
+	os.MkdirAll(appDir2, 0755)
 
-	if err := runCmd("rsync", "-a", "--delete",
-		appDir+"/",
-		appPublic+"/",
-	); err != nil {
+	// Build rsync args: always exclude Laravel runtime dirs, plus per-file persistent paths
+	rsyncArgs := []string{"-a", "--delete",
+		"--exclude=storage/framework",
+		"--exclude=storage/logs",
+	}
+	for _, p := range persistentPaths {
+		rsyncArgs = append(rsyncArgs, "--exclude="+p)
+	}
+	rsyncArgs = append(rsyncArgs, appDir+"/", appDir2+"/")
+
+	if err := runCmd("rsync", rsyncArgs...); err != nil {
 		return fmt.Errorf("rsync app code: %w", err)
 	}
 
-	// Write .env file if env content provided
+	// Write env vars to /etc/phpless.env (not /app/.env — avoids collision with app's own .env)
 	if envContent != "" {
-		envPath := filepath.Join(mountDir, "app", ".env")
-		if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
-			return fmt.Errorf("write .env: %w", err)
+		envPath := filepath.Join(mountDir, "etc", "phpless.env")
+		if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
+			return fmt.Errorf("write phpless.env: %w", err)
 		}
 	}
+
+	// Write .caddyfile if content provided
+	if caddyfileContent != "" {
+		caddyPath := filepath.Join(mountDir, "app", ".caddyfile")
+		if err := os.WriteFile(caddyPath, []byte(caddyfileContent), 0644); err != nil {
+			return fmt.Errorf("write .caddyfile: %w", err)
+		}
+	}
+
+	// Write workers config to /etc/phpless-workers.json
+	if workersConfig != "" {
+		workersPath := filepath.Join(mountDir, "etc", "phpless-workers.json")
+		if err := os.WriteFile(workersPath, []byte(workersConfig), 0644); err != nil {
+			return fmt.Errorf("write phpless-workers.json: %w", err)
+		}
+	} else {
+		os.Remove(filepath.Join(mountDir, "etc", "phpless-workers.json"))
+	}
+
+	// Create /app/storage structure — runtime dirs are excluded from rsync so they survive redeploys
+	storagePath := filepath.Join(mountDir, "app", "storage")
+	os.MkdirAll(storagePath, 0777)
+	os.MkdirAll(filepath.Join(storagePath, "framework", "views"), 0777)
+	os.MkdirAll(filepath.Join(storagePath, "framework", "cache", "data"), 0777)
+	os.MkdirAll(filepath.Join(storagePath, "framework", "sessions"), 0777)
+	os.MkdirAll(filepath.Join(storagePath, "logs"), 0777)
 
 	return nil
 }
