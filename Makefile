@@ -47,6 +47,17 @@ install-service:
 panel-deploy:
 	bash scripts/deploy-panel.sh
 
+# Fix panel permissions after any manual rsync from macOS (rsync resets ownership to 501:staff)
+# Run this any time you see 419/500 errors after deploying
+panel-fix-perms:
+	ssh $(SERVER) "chown -R www-data:www-data /var/www/phpless/panel && \
+		chmod -R 755 /var/www/phpless/panel/vendor && \
+		chmod -R 775 /var/www/phpless/panel/storage /var/www/phpless/panel/bootstrap/cache && \
+		chmod 775 /var/www/phpless/panel/database && \
+		chmod 664 /var/www/phpless/panel/database/database.sqlite && \
+		cd /var/www/phpless/panel && php artisan cache:clear && php artisan config:clear && php artisan route:clear && php artisan view:clear && \
+		echo 'Permissions fixed.'"
+
 # Build CLI binary (local macOS)
 cli:
 	cd cli && $(MAKE) build

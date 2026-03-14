@@ -1,6 +1,6 @@
 import { type SharedData } from '@/types';
 import { Head, Link, usePage } from '@inertiajs/react';
-import { ArrowLeft, BookOpen, ChevronRight, Code2, Key, Rocket, Server, Terminal, Variable } from 'lucide-react';
+import { ArrowLeft, BookOpen, Bot, ChevronRight, Code2, Key, Rocket, Server, Terminal, Variable } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 function SideNav({ active }: { active: string }) {
@@ -12,6 +12,7 @@ function SideNav({ active }: { active: string }) {
         { id: 'api-deploy', label: 'Deploying', icon: Terminal },
         { id: 'api-env', label: 'Environment Variables', icon: Variable },
         { id: 'api-team', label: 'Team & User', icon: BookOpen },
+        { id: 'cli-mcp', label: 'CLI & MCP', icon: Bot },
     ];
 
     return (
@@ -478,9 +479,143 @@ tar -czf app.tar.gz -C ./src .`}</CodeBlock>
                             </table>
                         </Section>
 
+                        <Section id="cli-mcp" title="CLI & MCP">
+                            <p>
+                                The PHPless CLI lets you deploy apps, manage environment variables, stream logs, and browse files — all from your terminal.
+                                It also ships a built-in <strong>Model Context Protocol (MCP) server</strong> so AI tools like Claude can manage your apps autonomously.
+                            </p>
+                            <p>
+                                Source code and releases:{' '}
+                                <a href="https://github.com/digitalnodecom/phpless" target="_blank" rel="noreferrer" className="text-blue-600 underline dark:text-blue-400">
+                                    github.com/digitalnodecom/phpless
+                                </a>
+                            </p>
+
+                            <h3 className="pt-2 text-lg font-medium text-neutral-900 dark:text-neutral-100">Installation</h3>
+                            <p>Download the latest binary from <a href="https://github.com/digitalnodecom/phpless/releases" target="_blank" rel="noreferrer" className="text-blue-600 underline dark:text-blue-400">GitHub Releases</a> and place it in your <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">PATH</code>:</p>
+                            <CodeBlock title="macOS / Linux">{`# Download the latest release for your platform, e.g.:
+curl -L https://github.com/digitalnodecom/phpless/releases/latest/download/phpless-darwin-arm64 \\
+  -o /usr/local/bin/phpless
+chmod +x /usr/local/bin/phpless`}</CodeBlock>
+                            <p>Or build from source (requires Go 1.22+):</p>
+                            <CodeBlock title="Build from source">{`git clone https://github.com/digitalnodecom/phpless
+cd phpless/cli
+go build -o /usr/local/bin/phpless .`}</CodeBlock>
+
+                            <h3 className="pt-2 text-lg font-medium text-neutral-900 dark:text-neutral-100">Authentication</h3>
+                            <p>Log in with your PHPless credentials. Your token is stored in <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">~/.config/phpless/config.toml</code>.</p>
+                            <CodeBlock>{`phpless login`}</CodeBlock>
+
+                            <h3 className="pt-2 text-lg font-medium text-neutral-900 dark:text-neutral-100">Common commands</h3>
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-neutral-200 dark:border-neutral-700">
+                                        <th className="py-2 pr-4 text-left font-medium">Command</th>
+                                        <th className="py-2 text-left font-medium">Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-neutral-600 dark:text-neutral-400">
+                                    {[
+                                        ['phpless login', 'Authenticate with your PHPless account'],
+                                        ['phpless apps list', 'List all apps in your team'],
+                                        ['phpless apps create "My App"', 'Create a new app'],
+                                        ['phpless deploy [slug]', 'Deploy current directory (or specify slug)'],
+                                        ['phpless pull [slug]', 'Download deployed code to local directory'],
+                                        ['phpless logs [slug]', 'Stream recent access logs'],
+                                        ['phpless files [slug]', 'Browse deployed files'],
+                                        ['phpless env list --app <slug>', 'List env vars for an app'],
+                                        ['phpless env set --app <slug> KEY=value', 'Set an env var'],
+                                        ['phpless env set --team KEY=value', 'Set a team-wide env var'],
+                                    ].map(([cmd, desc]) => (
+                                        <tr key={cmd} className="border-b border-neutral-100 dark:border-neutral-800">
+                                            <td className="py-2 pr-4"><code>{cmd}</code></td>
+                                            <td className="py-2">{desc}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+
+                            <h3 className="pt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">MCP Server (Claude integration)</h3>
+                            <p>
+                                The CLI includes an MCP server (<code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">phpless mcp</code>) that exposes your PHPless account
+                                as tools Claude can call. Once configured, Claude can list your apps, deploy code, check logs, and manage environment variables on your behalf.
+                            </p>
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                                Requires <code>phpless login</code> to be run once before the MCP server will work.
+                            </p>
+
+                            <h3 className="pt-2 text-lg font-medium text-neutral-900 dark:text-neutral-100">Claude Code</h3>
+                            <p>Add the MCP server to Claude Code by running:</p>
+                            <CodeBlock>{`claude mcp add phpless -- phpless mcp`}</CodeBlock>
+                            <p>Or add it manually to your Claude Code settings (<code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">~/.claude/settings.json</code>):</p>
+                            <CodeBlock title="~/.claude/settings.json">{`{
+  "mcpServers": {
+    "phpless": {
+      "command": "phpless",
+      "args": ["mcp"]
+    }
+  }
+}`}</CodeBlock>
+
+                            <h3 className="pt-2 text-lg font-medium text-neutral-900 dark:text-neutral-100">Claude Desktop</h3>
+                            <p>Add the following to your Claude Desktop config (<code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">~/Library/Application Support/Claude/claude_desktop_config.json</code> on macOS):</p>
+                            <CodeBlock title="claude_desktop_config.json">{`{
+  "mcpServers": {
+    "phpless": {
+      "command": "phpless",
+      "args": ["mcp"]
+    }
+  }
+}`}</CodeBlock>
+
+                            <h3 className="pt-2 text-lg font-medium text-neutral-900 dark:text-neutral-100">Available MCP tools</h3>
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-neutral-200 dark:border-neutral-700">
+                                        <th className="py-2 pr-4 text-left font-medium">Tool</th>
+                                        <th className="py-2 text-left font-medium">Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-neutral-600 dark:text-neutral-400">
+                                    {[
+                                        ['whoami', 'Show authenticated user and current team'],
+                                        ['list_apps', 'List all apps in the current team'],
+                                        ['get_app', 'Get detailed info about an app (slug required)'],
+                                        ['create_app', 'Create a new app (name required; slug, vcpus, mem_mib optional)'],
+                                        ['delete_app', 'Delete an app and its VM (slug required)'],
+                                        ['deploy', 'Deploy a local directory to an app (slug + directory required)'],
+                                        ['pull_app', 'Download deployed code into a local directory'],
+                                        ['get_logs', 'Get recent access logs for an app'],
+                                        ['list_files', 'List deployed files for an app'],
+                                        ['list_env', "List env vars (scope: 'app' or 'team')"],
+                                        ['set_env', "Set an env var (scope: 'app' or 'team')"],
+                                        ['delete_env', "Delete an env var (scope: 'app' or 'team')"],
+                                    ].map(([tool, desc]) => (
+                                        <tr key={tool} className="border-b border-neutral-100 dark:border-neutral-800">
+                                            <td className="py-2 pr-4"><code>{tool}</code></td>
+                                            <td className="py-2">{desc}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </Section>
+
                         {/* Full endpoint reference */}
                         <section id="reference" className="scroll-mt-24">
                             <h2 className="mb-4 text-2xl font-semibold text-neutral-900 dark:text-neutral-100">API Reference</h2>
+                            <div className="mb-6 flex items-center gap-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                                        Explore and test all API endpoints interactively with the <strong>Swagger UI</strong>.
+                                    </p>
+                                </div>
+                                <a
+                                    href="/docs/api"
+                                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+                                >
+                                    Open API Explorer
+                                </a>
+                            </div>
                             <p className="mb-6 text-neutral-700 dark:text-neutral-300">
                                 All endpoints are prefixed with <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">/api/v1</code>.
                                 Authenticated endpoints require <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">Authorization: Bearer &lt;token&gt;</code>.

@@ -71,14 +71,22 @@ touch database/database.sqlite
 # Run migrations
 php artisan migrate --force
 
-# Cache routes/views (skip config:cache — .env not resolved correctly when run as root)
-php artisan route:cache
-php artisan view:cache
+# CRITICAL: rsync from macOS sets ownership to 501:staff on ALL files/dirs.
+# PHP-FPM runs as www-data and:
+#   - cannot read vendor/         → 419/500 errors
+#   - cannot write database dir   → sessions not created → 419 on every login
+# Fix ownership on the entire panel dir, then tighten permissions appropriately.
+chown -R www-data:www-data /var/www/phpless/panel
+chmod -R 755 /var/www/phpless/panel/vendor
+chmod -R 775 /var/www/phpless/panel/storage /var/www/phpless/panel/bootstrap/cache
+chmod 775 /var/www/phpless/panel/database
+chmod 664 /var/www/phpless/panel/database/database.sqlite
 
-# Set permissions
-chown -R www-data:www-data storage bootstrap/cache database
-chmod -R 775 storage bootstrap/cache
-chmod 664 database/database.sqlite
+# Clear all caches (must run after chown so www-data can write cache files)
+php artisan cache:clear
+php artisan config:clear
+php artisan route:clear
+php artisan view:clear
 SETUP
 
 # Step 5: Deploy server configs

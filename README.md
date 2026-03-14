@@ -121,9 +121,11 @@ This script:
 1. Builds frontend assets locally (`npm run build`)
 2. Installs server-side dependencies (PHP-FPM, Node, Composer)
 3. Rsyncs panel files to the server
-4. Runs `composer install`, `artisan migrate`, route/view caching
+4. Runs `composer install`, `artisan migrate`, fixes permissions, clears all caches
 5. Deploys PHP-FPM pool, queue worker, and Caddy configs
 6. Restarts all services
+
+> **Important**: After any manual rsync from macOS, run `make panel-fix-perms`. rsync resets file ownership to `501:staff` (your local macOS user), which prevents PHP-FPM (running as `www-data`) from reading `vendor/` — causing 419 CSRF errors and 500s on every request.
 
 ### 5. Create the First User
 
@@ -270,6 +272,8 @@ VMs are child processes of the Go manager — they die when the manager stops. T
 - **File uploads to VM**: Always use `scp` for the init script, never SSH heredocs (encoding issues cause `ENOEXEC`).
 - **FrankenPHP Caddyfile**: The bare `frankenphp` directive (no braces) in the global block is required for `php_server` to work.
 - **Deploy script**: Do NOT overwrite `/etc/caddy/Caddyfile` with a static template — per-app routing blocks are generated dynamically from the database by `CaddyConfigManager`.
+- **Panel permissions (macOS rsync)**: Every rsync from macOS resets ownership of all synced files to `501:staff`. PHP-FPM runs as `www-data` and cannot read `vendor/` with that ownership, causing 419 CSRF errors and 500s. The deploy script fixes this automatically. For manual rsyncs, always run `make panel-fix-perms` afterwards.
+- **Never exclude `database/database.sqlite` from rsync**: Omitting it from `--exclude` will overwrite the production database with a local empty one. Recovery is possible via `cp /proc/<queue-worker-pid>/fd/<n> database.sqlite` if the queue worker has the file open.
 
 ## License
 

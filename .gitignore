@@ -28,6 +28,9 @@ panel/database/database.sqlite
 
 # Go
 phpless-manager/phpless-manager
+phpless-manager/phpless-manager-linux
+cli/phpless
+rootfs/worker-manager/phpless-workers
 
 # Build artifacts
 bin/
