@@ -5,7 +5,10 @@ use App\Http\Controllers\AppController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DomainController;
 use App\Http\Controllers\EnvironmentVariableController;
+use App\Http\Controllers\TeamController;
 use App\Http\Controllers\TeamEnvironmentVariableController;
+use App\Http\Controllers\TeamInvitationController;
+use App\Http\Controllers\TerminalController;
 use App\Http\Middleware\EnsureHasTeam;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -253,6 +256,10 @@ Route::get('/docs', function () {
     return Inertia::render('docs');
 })->name('docs');
 
+// Invitations — show is public (guests see login prompt), accept requires auth
+Route::get('/invitations/{token}', [TeamInvitationController::class, 'show'])->name('invitations.show');
+Route::middleware('auth')->post('/invitations/{token}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');
+
 Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 
@@ -262,9 +269,18 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
 
     Route::post('apps/{app}/deploy', [AppController::class, 'deploy'])->name('apps.deploy');
     Route::get('apps/{app}/files', [AppController::class, 'files'])->name('apps.files');
+    Route::post('apps/{app}/files/upload', [AppController::class, 'filesUpload'])->name('apps.files.upload');
+    Route::post('apps/{app}/files/write', [AppController::class, 'filesWrite'])->name('apps.files.write');
+    Route::delete('apps/{app}/files', [AppController::class, 'filesDelete'])->name('apps.files.delete');
+    Route::get('apps/{app}/files/download', [AppController::class, 'filesDownload'])->name('apps.files.download');
+    Route::post('apps/{app}/files/persistent', [AppController::class, 'setPersistent'])->name('apps.files.persistent');
     Route::put('apps/{app}/rename', [AppController::class, 'rename'])->name('apps.rename');
     Route::put('apps/{app}/settings', [AppController::class, 'updateSettings'])->name('apps.settings.update');
+    Route::put('apps/{app}/workers', [AppController::class, 'updateWorkers'])->name('apps.workers.update');
+    Route::get('apps/{app}/workers/status', [AppController::class, 'workerStatus'])->name('apps.workers.status');
+    Route::get('apps/{app}/workers/logs', [AppController::class, 'workerLogs'])->name('apps.workers.logs');
     Route::post('apps/{app}/generate-mercure-keys', [AppController::class, 'generateMercureKeys'])->name('apps.generate-mercure-keys');
+    Route::post('apps/{app}/terminal-session', [TerminalController::class, 'store'])->name('apps.terminal-session');
     Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
     Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
 
@@ -279,6 +295,9 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/env', [EnvironmentVariableController::class, 'store'])->name('apps.env.store');
     Route::put('apps/{app}/env/{envVar}', [EnvironmentVariableController::class, 'update'])->name('apps.env.update');
     Route::delete('apps/{app}/env/{envVar}', [EnvironmentVariableController::class, 'destroy'])->name('apps.env.destroy');
+
+    // Team switching
+    Route::post('teams/{team}/switch', [TeamController::class, 'switchTeam'])->name('teams.switch');
 
     // Team settings
     Route::get('settings/team/env', [TeamEnvironmentVariableController::class, 'index'])->name('team.env.index');

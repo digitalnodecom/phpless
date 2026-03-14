@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\App;
 use App\Services\CaddyConfigManager;
+use App\Services\CaddyfileGenerator;
 use App\Services\EnvironmentVariableService;
 use App\Services\VMManagerClient;
 use Illuminate\Console\Command;
@@ -80,7 +81,7 @@ class RestoreVms extends Command
 
     private function restoreApp(App $app, VMManagerClient $vmManager, EnvironmentVariableService $envService): void
     {
-        $vm = $vmManager->createVM($app->slug, $app->vcpus, $app->mem_mib);
+        $vm = $vmManager->createVM($app->slug, $app->vcpus, $app->mem_mib, $app->vm_id ?: null);
         $vmId = $vm['id'] ?? $app->slug;
 
         $app->update([
@@ -101,7 +102,8 @@ class RestoreVms extends Command
         $buildDir = config('phpless.builds_dir') . '/' . $app->slug;
         if (is_dir($buildDir)) {
             $envContent = $envService->generateEnvContent($app);
-            $result = $vmManager->deployCode($vmId, $buildDir, $envContent);
+            $caddyContent = (new CaddyfileGenerator)->generate($app);
+            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? []);
             $newVmId = $result['vm_id'] ?? $vmId;
 
             $vm = $vmManager->waitForRunning($newVmId);

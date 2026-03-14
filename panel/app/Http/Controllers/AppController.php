@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\App;
 use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
+use App\Services\CaddyfileGenerator;
 use App\Services\EnvironmentVariableService;
 use App\Services\VMManagerClient;
 use Illuminate\Http\JsonResponse;
@@ -16,19 +17,39 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
-use SplFileObject;
 
 class AppController extends Controller
 {
-    public function index(Request $request): Response
+    public function index(Request $request, VMManagerClient $vmManager): Response
     {
         $apps = $request->user()->currentTeam
             ->apps()
             ->latest()
             ->get();
 
+        // Fetch VM stats (disk, memory, CPU) in one call and key by VM ID.
+        $statsByVmId = [];
+        try {
+            $vms = $vmManager->listVMs();
+            foreach ($vms as $vm) {
+                $statsByVmId[$vm['id']] = [
+                    'disk_used' => $vm['disk_used'] ?? null,
+                    'disk_total' => $vm['disk_total'] ?? null,
+                    'mem_used' => $vm['mem_used'] ?? null,
+                    'cpu_pct' => $vm['cpu_pct'] ?? null,
+                ];
+            }
+        } catch (\Throwable) {
+            // Manager unreachable — stats will be omitted
+        }
+
+        $appsWithDisk = $apps->map(function (App $app) use ($statsByVmId) {
+            $stats = $statsByVmId[$app->vm_id] ?? ['disk_used' => null, 'disk_total' => null, 'mem_used' => null, 'cpu_pct' => null];
+            return array_merge($app->toArray(), $stats);
+        });
+
         return Inertia::render('apps/index', [
-            'apps' => $apps,
+            'apps' => $appsWithDisk,
         ]);
     }
 
@@ -43,7 +64,7 @@ class AppController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'slug' => ['nullable', 'string', 'max:255', 'alpha_dash', Rule::unique('apps', 'slug')],
             'vcpus' => ['required', 'integer', 'in:1,2'],
-            'mem_mib' => ['required', 'integer', 'in:128,256,512,1024'],
+            'mem_mib' => ['required', 'integer', 'in:256,512,1024'],
         ]);
 
         if (empty($validated['slug'])) {
@@ -82,10 +103,39 @@ class AppController extends Controller
 
         return Inertia::render('apps/show', [
             'app' => $app->load(['deployments' => function ($q) {
-                $q->latest()->limit(10);
+                $q->with('triggeredBy:id,name')->latest()->limit(10);
             }, 'domains']),
             'serverIp' => config('phpless.server_ip'),
         ]);
+    }
+
+    public function rename(Request $request, App $app, CaddyConfigManager $caddy): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $validated = $request->validate([
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'slug' => ['sometimes', 'required', 'string', 'max:255', 'alpha_dash', Rule::unique('apps', 'slug')->ignore($app->id)],
+        ]);
+
+        $oldSlug = $app->slug;
+        $slugChanged = isset($validated['slug']) && $validated['slug'] !== $oldSlug;
+
+        $app->update($validated);
+
+        if ($slugChanged) {
+            // Rename the build directory so deploys continue to work
+            $oldBuildDir = base_path("../builds/{$oldSlug}");
+            $newBuildDir = base_path("../builds/{$app->slug}");
+
+            if (File::isDirectory($oldBuildDir) && ! File::isDirectory($newBuildDir)) {
+                File::moveDirectory($oldBuildDir, $newBuildDir);
+            }
+
+            $caddy->regenerateAndReload();
+        }
+
+        return response()->json(['message' => 'App updated.', 'slug' => $app->slug]);
     }
 
     public function destroy(App $app, AppLifecycleService $lifecycle): RedirectResponse
@@ -99,35 +149,166 @@ class AppController extends Controller
             ->with('success', "App '{$name}' deleted successfully.");
     }
 
-    public function code(App $app): Response
+    public function files(Request $request, App $app): JsonResponse
     {
         Gate::authorize('view', $app);
 
-        $buildPath = base_path("../builds/{$app->slug}/index.php");
+        $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
+        $subPath = ltrim(str_replace('..', '', $request->query('path', '')), '/');
+        $fullPath = $subPath ? $baseDir . '/' . $subPath : $baseDir;
 
-        $code = File::exists($buildPath)
-            ? File::get($buildPath)
-            : "<?php\n\necho \"Hello from {$app->name}!\";\n";
+        if (! File::exists($baseDir)) {
+            return response()->json(['items' => []]);
+        }
 
-        return Inertia::render('apps/code', [
-            'app' => $app,
-            'code' => $code,
-        ]);
+        if (! File::exists($fullPath) || ! is_dir($fullPath)) {
+            return response()->json(['items' => []]);
+        }
+
+        $persistentPaths = $app->persistent_paths ?? [];
+        $items = [];
+
+        // Directories first
+        foreach (File::directories($fullPath) as $dir) {
+            $name = basename($dir);
+            $relPath = $subPath ? $subPath . '/' . $name : $name;
+            $items[] = [
+                'name' => $name,
+                'path' => $relPath,
+                'type' => 'dir',
+                'size' => 0,
+                'modified_at' => date('Y-m-d H:i:s', filemtime($dir)),
+                'is_persistent' => false,
+            ];
+        }
+
+        // Files
+        foreach (File::files($fullPath) as $file) {
+            $name = $file->getFilename();
+            $relPath = $subPath ? $subPath . '/' . $name : $name;
+            $items[] = [
+                'name' => $name,
+                'path' => $relPath,
+                'type' => 'file',
+                'size' => $file->getSize(),
+                'modified_at' => date('Y-m-d H:i:s', $file->getMTime()),
+                'is_persistent' => in_array($relPath, $persistentPaths, true),
+            ];
+        }
+
+        usort($items, fn ($a, $b) => $a['type'] === $b['type']
+            ? strcmp($a['name'], $b['name'])
+            : ($a['type'] === 'dir' ? -1 : 1));
+
+        return response()->json(['items' => $items]);
     }
 
-    public function updateCode(Request $request, App $app): RedirectResponse
+    public function filesUpload(Request $request, App $app): JsonResponse
     {
         Gate::authorize('view', $app);
 
-        $validated = $request->validate([
-            'code' => ['required', 'string', 'max:1048576'],
+        $request->validate([
+            'file' => ['required', 'file', 'max:51200'],
+            'path' => ['nullable', 'string', 'max:500'],
         ]);
 
-        $buildDir = base_path("../builds/{$app->slug}");
-        File::ensureDirectoryExists($buildDir);
-        File::put("{$buildDir}/index.php", $validated['code']);
+        $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
+        File::ensureDirectoryExists($baseDir, 0755);
 
-        return back()->with('success', 'Code saved.');
+        $uploadedFile = $request->file('file');
+        $relativePath = ltrim(str_replace('..', '', $request->input('path') ?: $uploadedFile->getClientOriginalName()), '/');
+        $destination = $baseDir . '/' . $relativePath;
+
+        File::ensureDirectoryExists(dirname($destination), 0755);
+        $uploadedFile->move(dirname($destination), basename($destination));
+
+        return response()->json(['message' => 'Uploaded.', 'path' => $relativePath]);
+    }
+
+    public function filesWrite(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $request->validate([
+            'path'    => ['required', 'string', 'max:500'],
+            'content' => ['present', 'nullable', 'string'],
+        ]);
+
+        $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
+        $relativePath = ltrim(str_replace('..', '', $request->input('path')), '/');
+        $destination = $baseDir . '/' . $relativePath;
+
+        File::ensureDirectoryExists(dirname($destination), 0755);
+        File::put($destination, $request->input('content', ''));
+
+        return response()->json(['message' => 'Saved.', 'path' => $relativePath]);
+    }
+
+    public function filesDelete(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $request->validate([
+            'path' => ['required', 'string', 'max:500'],
+        ]);
+
+        $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
+        $relativePath = ltrim(str_replace('..', '', $request->input('path')), '/');
+        $target = $baseDir . '/' . $relativePath;
+
+        if (File::exists($target) && str_starts_with(realpath($target), realpath($baseDir))) {
+            if (is_dir($target)) {
+                File::deleteDirectory($target);
+            } else {
+                File::delete($target);
+            }
+        }
+
+        return response()->json(['message' => 'Deleted.']);
+    }
+
+    public function filesDownload(Request $request, App $app)
+    {
+        Gate::authorize('view', $app);
+
+        $request->validate([
+            'path' => ['required', 'string', 'max:500'],
+        ]);
+
+        $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
+        $relativePath = ltrim(str_replace('..', '', $request->query('path')), '/');
+        $target = $baseDir . '/' . $relativePath;
+
+        if (! File::exists($target) || ! str_starts_with(realpath($target), realpath($baseDir))) {
+            abort(404);
+        }
+
+        return response()->download($target, basename($target));
+    }
+
+    public function setPersistent(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $request->validate([
+            'path'       => ['required', 'string', 'max:500'],
+            'persistent' => ['required', 'boolean'],
+        ]);
+
+        $path = ltrim(str_replace('..', '', $request->input('path')), '/');
+        $paths = $app->persistent_paths ?? [];
+
+        if ($request->boolean('persistent')) {
+            if (! in_array($path, $paths, true)) {
+                $paths[] = $path;
+            }
+        } else {
+            $paths = array_values(array_filter($paths, fn ($p) => $p !== $path));
+        }
+
+        $app->update(['persistent_paths' => $paths]);
+
+        return response()->json(['message' => 'Updated.', 'persistent_paths' => $paths]);
     }
 
     public function deploy(App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): RedirectResponse
@@ -140,13 +321,15 @@ class AppController extends Controller
 
         $buildDir = base_path("../builds/{$app->slug}");
 
-        if (! File::exists("{$buildDir}/index.php")) {
-            return back()->withErrors(['deploy' => 'No code to deploy. Save your code first.']);
+        if (! File::isDirectory($buildDir) || count(File::allFiles($buildDir)) === 0) {
+            return back()->withErrors(['deploy' => 'No code to deploy. Upload a tarball first.']);
         }
 
         try {
             $envContent = $envService->generateEnvContent($app);
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent);
+            $caddyContent = (new CaddyfileGenerator)->generate($app);
+            $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig);
 
             // Deploy restarts the VM — sync the new VM state
             $newVmId = $result['vm_id'] ?? $app->vm_id;
@@ -168,6 +351,7 @@ class AppController extends Controller
                 'triggered_by' => auth()->id(),
                 'status' => 'succeeded',
                 'commit_message' => 'In-browser deploy',
+                'source' => 'web',
                 'started_at' => now(),
                 'completed_at' => now(),
             ]);
@@ -176,6 +360,137 @@ class AppController extends Controller
         } catch (\RuntimeException $e) {
             return back()->withErrors(['deploy' => $e->getMessage()]);
         }
+    }
+
+    public function updateSettings(Request $request, App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $validated = $request->validate([
+            'worker_mode' => 'boolean',
+            'worker_script' => 'string|max:255',
+            'worker_count' => 'integer|min:1|max:16',
+            'mercure_enabled' => 'boolean',
+            'vcpus' => 'nullable|integer|in:1,2',
+            'mem_mib' => 'nullable|integer|in:256,512,1024',
+            'web_root' => 'nullable|string|max:100',
+        ]);
+
+        $needsVMResize = $app->vm_id && (
+            (isset($validated['vcpus']) && (int) $validated['vcpus'] !== (int) $app->vcpus) ||
+            (isset($validated['mem_mib']) && (int) $validated['mem_mib'] !== (int) $app->mem_mib)
+        );
+
+        $app->update($validated);
+
+        if (! $needsVMResize) {
+            return response()->json(['message' => 'Settings updated. Redeploy to apply changes.']);
+        }
+
+        // Resize: destroy old VM, create new with updated specs, redeploy code
+        try {
+            $vmManager->destroyVM($app->vm_id);
+
+            $vm = $vmManager->createVM($app->slug, $app->vcpus, $app->mem_mib);
+            $newVmId = $vm['id'];
+            $app->update(['vm_id' => $newVmId, 'vm_state' => 'starting']);
+
+            // Redeploy code if it exists
+            $buildDir = base_path("../builds/{$app->slug}");
+            if (File::isDirectory($buildDir)) {
+                $envContent = $envService->generateEnvContent($app);
+                $caddyContent = (new CaddyfileGenerator)->generate($app);
+                $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
+                $result = $vmManager->deployCode($newVmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig);
+                $newVmId = $result['vm_id'] ?? $newVmId;
+            }
+
+            $vm = $vmManager->waitForRunning($newVmId, 20);
+            $app->update([
+                'vm_id' => $newVmId,
+                'vm_state' => $vm['state'] ?? 'running',
+                'vm_ip' => $vm['ip'] ?? $app->vm_ip,
+            ]);
+
+            $caddy->regenerateAndReload();
+
+            return response()->json(['message' => 'VM resized and redeployed successfully.', 'resized' => true]);
+        } catch (\Throwable $e) {
+            $app->update(['vm_state' => 'error']);
+            return response()->json(['message' => 'Resize failed: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function updateWorkers(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $validated = $request->validate([
+            'workers' => ['present', 'array'],
+            'workers.*.name' => ['required', 'string', 'max:50'],
+            'workers.*.command' => ['required', 'string', 'max:500'],
+            'workers.*.processes' => ['required', 'integer', 'min:1', 'max:8'],
+        ]);
+
+        $app->update(['workers' => $validated['workers']]);
+
+        return response()->json(['message' => 'Workers updated. Redeploy to apply.']);
+    }
+
+    public function workerStatus(App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        if (! $app->vm_ip || $app->vm_state !== 'running') {
+            return response()->json(['workers' => [], 'error' => 'VM not running']);
+        }
+
+        try {
+            // Query the worker manager's HTTP API inside the VM via the host-side manager
+            $response = $vmManager->getWorkerStatus($app->vm_ip);
+
+            return response()->json(['workers' => $response]);
+        } catch (\Throwable $e) {
+            return response()->json(['workers' => [], 'error' => 'Could not reach worker manager']);
+        }
+    }
+
+    public function workerLogs(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $name = $request->query('name', '');
+        $index = (int) $request->query('index', 0);
+        $lines = (int) $request->query('lines', 100);
+
+        if (! $app->vm_ip || $app->vm_state !== 'running' || $name === '') {
+            return response()->json(['lines' => []]);
+        }
+
+        try {
+            $response = $vmManager->getWorkerLogs($app->vm_ip, $name, $index, $lines);
+
+            return response()->json($response);
+        } catch (\Throwable) {
+            return response()->json(['lines' => []]);
+        }
+    }
+
+    public function generateMercureKeys(App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $publisherKey = Str::random(64);
+        $subscriberKey = Str::random(64);
+
+        foreach (['MERCURE_PUBLISHER_JWT_KEY' => $publisherKey, 'MERCURE_SUBSCRIBER_JWT_KEY' => $subscriberKey] as $key => $value) {
+            \App\Models\EnvironmentVariable::updateOrCreate(
+                ['app_id' => $app->id, 'key' => $key, 'team_id' => null],
+                ['value' => $value, 'is_secret' => false],
+            );
+        }
+
+        return response()->json(['message' => 'JWT keys generated. Redeploy to apply.']);
     }
 
     public function analytics(App $app): JsonResponse
@@ -205,53 +520,51 @@ class AppController extends Controller
         ]);
     }
 
-    public function logs(App $app): JsonResponse
+    public function logs(App $app, VMManagerClient $vmManager): JsonResponse
     {
         Gate::authorize('view', $app);
 
-        $logPath = config('phpless.log_dir') . '/' . $app->slug . '.log';
-
-        if (! file_exists($logPath)) {
-            return response()->json(['logs' => []]);
+        // Fetch VM console logs (FrankenPHP startup + PHP errors)
+        $consoleLogs = [];
+        if ($app->vm_id) {
+            try {
+                $consoleLogs = $vmManager->getVMLogs($app->vm_id);
+            } catch (\Throwable) {
+                // Manager unreachable or VM has no log yet
+            }
         }
 
         $lines = [];
 
-        try {
-            $file = new SplFileObject($logPath, 'r');
-            $file->seek(PHP_INT_MAX);
-            $totalLines = $file->key();
+        $slug = $app->slug;
+        $raw = [];
+        exec('sudo /usr/local/bin/phpless-read-log ' . escapeshellarg($slug) . ' 200 2>/dev/null', $raw);
 
-            $start = max(0, $totalLines - 100);
-            $file->seek($start);
-
-            while (! $file->eof()) {
-                $line = trim($file->fgets());
-                if ($line === '') {
-                    continue;
-                }
-
-                $entry = json_decode($line, true);
-                if (! $entry || ! isset($entry['ts'])) {
-                    continue;
-                }
-
-                $request = $entry['request'] ?? [];
-
-                $lines[] = [
-                    'timestamp' => date('Y-m-d H:i:s', (int) $entry['ts']),
-                    'method' => $request['method'] ?? '-',
-                    'path' => $request['uri'] ?? '-',
-                    'status' => $entry['status'] ?? 0,
-                    'duration' => round(($entry['duration'] ?? 0) * 1000, 1),
-                    'client_ip' => $request['client_ip'] ?? ($request['remote_ip'] ?? '-'),
-                    'size' => $entry['size'] ?? 0,
-                ];
+        foreach ($raw as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
             }
-        } catch (\Throwable) {
-            // Log file unreadable
+
+            $entry = json_decode($line, true);
+            if (! $entry || ! isset($entry['ts'])) {
+                continue;
+            }
+
+            $request = $entry['request'] ?? [];
+
+            $lines[] = [
+                'timestamp' => date('Y-m-d H:i:s', (int) $entry['ts']),
+                'method'    => $request['method'] ?? '-',
+                'path'      => $request['uri'] ?? '-',
+                'status'    => $entry['status'] ?? 0,
+                'duration'  => round(($entry['duration'] ?? 0) * 1000, 1),
+                'client_ip' => $request['client_ip'] ?? ($request['remote_ip'] ?? '-'),
+                'size'      => $entry['size'] ?? 0,
+            ];
         }
 
-        return response()->json(['logs' => $lines]);
+        return response()->json(['logs' => $lines, 'console_logs' => $consoleLogs]);
     }
+
 }

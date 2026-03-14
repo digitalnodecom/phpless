@@ -21,10 +21,19 @@ export interface NavItem {
     isActive?: boolean;
 }
 
+export interface TeamSummary {
+    id: number;
+    name: string;
+    slug: string;
+}
+
 export interface SharedData {
     name: string;
     quote: { message: string; author: string };
     auth: Auth;
+    currentTeam: TeamSummary | null;
+    userTeams: TeamSummary[];
+    registrationOpen: boolean;
     [key: string]: unknown;
 }
 
@@ -35,9 +44,24 @@ export interface User {
     avatar?: string;
     email_verified_at: string | null;
     current_team_id: number | null;
+    is_admin: boolean;
     created_at: string;
     updated_at: string;
     [key: string]: unknown;
+}
+
+export interface Subscription {
+    status: string;
+    ends_at: string | null;
+    trial_ends_at: string | null;
+}
+
+export interface Invoice {
+    id: string;
+    date: string;
+    total: string;
+    status: string;
+    pdf: string | null;
 }
 
 export interface Team {
@@ -63,21 +87,59 @@ export interface App {
     php_version: string;
     github_repo: string | null;
     github_branch: string;
+    worker_mode: boolean;
+    worker_script: string;
+    worker_count: number;
+    mercure_enabled: boolean;
+    web_root: string;
+    persistent_paths: string[] | null;
     created_at: string;
     updated_at: string;
+    workers: WorkerDef[] | null;
+    disk_used: number | null;
+    disk_total: number | null;
+    mem_used: number | null;
+    cpu_pct: number | null;
     deployments?: Deployment[];
     domains?: Domain[];
+}
+
+export interface WorkerDef {
+    name: string;
+    command: string;
+    processes: number;
+    directory?: string;
+}
+
+export interface WorkerStatus {
+    name: string;
+    index: number;
+    pid: number;
+    state: string;
+    restarts: number;
+    uptime_seconds: number;
+    last_exit_code: number;
+}
+
+export interface FileItem {
+    name: string;
+    path: string;
+    type: 'file' | 'dir';
+    size: number;
+    modified_at: string;
+    is_persistent: boolean;
 }
 
 export interface Deployment {
     id: number;
     app_id: number;
-    triggered_by: number | null;
+    triggered_by: { id: number; name: string } | null;
     commit_sha: string | null;
     commit_message: string | null;
     branch: string | null;
     status: string;
     log: string | null;
+    source: string | null;
     started_at: string | null;
     completed_at: string | null;
     created_at: string;
@@ -139,7 +201,22 @@ export interface EnvironmentVariable {
 export interface DashboardStats {
     totalApps: number;
     runningApps: number;
-    appLimit: number;
     engineStatus: string;
     engineHealth: Record<string, unknown> | null;
+}
+
+export interface TeamMember {
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+    is_owner: boolean;
+}
+
+export interface TeamInvitation {
+    id: number;
+    email: string | null;
+    url: string;
+    expires_at: string;
+    created_at: string;
 }

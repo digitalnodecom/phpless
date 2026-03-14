@@ -19,7 +19,7 @@ export default function AppsCreate() {
         name: '',
         slug: '',
         vcpus: '1',
-        mem_mib: '128',
+        mem_mib: '256',
     });
 
     function generateSlug(name: string) {
@@ -89,7 +89,6 @@ export default function AppsCreate() {
                                                 <SelectValue />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="128">128 MB</SelectItem>
                                                 <SelectItem value="256">256 MB</SelectItem>
                                                 <SelectItem value="512">512 MB</SelectItem>
                                                 <SelectItem value="1024">1024 MB</SelectItem>

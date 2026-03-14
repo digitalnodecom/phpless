@@ -6,6 +6,32 @@ import { type App, type BreadcrumbItem } from '@/types';
 import { Head, Link } from '@inertiajs/react';
 import { Plus } from 'lucide-react';
 
+function formatMb(bytes: number): string {
+    const mb = bytes / 1024 / 1024;
+    return mb >= 1000 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB';
+}
+
+function UsageBar({ used, total, label }: { used: number | null; total: number | null; label?: string }) {
+    if (used === null || total === null || total === 0) {
+        return <span className="text-muted-foreground text-xs">—</span>;
+    }
+
+    const pct = Math.min(100, Math.round((used / total) * 100));
+    const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-primary/70';
+    const textColor = pct >= 90 ? 'text-red-500' : pct >= 70 ? 'text-yellow-500' : 'text-muted-foreground';
+
+    return (
+        <div className="flex min-w-[110px] flex-col gap-1">
+            <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
+                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className={`text-xs ${textColor}`}>
+                {label ?? `${formatMb(used)} / ${formatMb(total)}`}
+            </span>
+        </div>
+    );
+}
+
 const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Dashboard', href: '/dashboard' },
     { title: 'Apps', href: '/apps' },
@@ -63,6 +89,9 @@ export default function AppsIndex({ apps }: { apps: App[] }) {
                                     <TableHead>Status</TableHead>
                                     <TableHead>IP</TableHead>
                                     <TableHead>Resources</TableHead>
+                                    <TableHead>RAM</TableHead>
+                                    <TableHead>CPU</TableHead>
+                                    <TableHead>Disk</TableHead>
                                     <TableHead>Created</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -81,6 +110,25 @@ export default function AppsIndex({ apps }: { apps: App[] }) {
                                         <TableCell className="font-mono text-sm">{app.vm_ip || '-'}</TableCell>
                                         <TableCell className="text-muted-foreground text-sm">
                                             {app.vcpus} vCPU / {app.mem_mib} MB
+                                        </TableCell>
+                                        <TableCell>
+                                            <UsageBar
+                                                used={app.mem_used}
+                                                total={app.mem_mib * 1024 * 1024}
+                                                label={app.mem_used != null ? `${formatMb(app.mem_used)} / ${app.mem_mib} MB` : undefined}
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            {app.cpu_pct != null ? (
+                                                <span className={`text-sm font-mono ${app.cpu_pct >= 80 ? 'text-red-500' : app.cpu_pct >= 50 ? 'text-yellow-500' : 'text-muted-foreground'}`}>
+                                                    {app.cpu_pct.toFixed(1)}%
+                                                </span>
+                                            ) : (
+                                                <span className="text-muted-foreground text-xs">—</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell>
+                                            <UsageBar used={app.disk_used} total={app.disk_total} />
                                         </TableCell>
                                         <TableCell className="text-muted-foreground text-sm">
                                             {new Date(app.created_at).toLocaleDateString()}

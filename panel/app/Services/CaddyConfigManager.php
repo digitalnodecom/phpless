@@ -24,7 +24,7 @@ class CaddyConfigManager
         $config = $this->generateConfig();
         file_put_contents($this->caddyfilePath, $config);
 
-        $result = Process::run('sudo systemctl reload caddy');
+        $result = Process::run('sudo /usr/local/bin/phpless-caddy-reload');
 
         if ($result->failed()) {
             throw new RuntimeException("Failed to reload Caddy: {$result->errorOutput()}");
@@ -45,6 +45,9 @@ class CaddyConfigManager
 
         // Panel block
         $lines[] = "{$this->domain} {";
+        $lines[] = "\thandle_path /ws/* {";
+        $lines[] = "\t\treverse_proxy 127.0.0.1:7474";
+        $lines[] = "\t}";
         $lines[] = "\troot * /var/www/phpless/panel/public";
         $lines[] = "\tphp_fastcgi unix//run/php/php8.4-fpm.sock";
         $lines[] = "\tfile_server";
