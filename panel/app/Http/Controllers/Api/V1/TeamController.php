@@ -9,6 +9,11 @@ use Illuminate\Http\Request;
 
 class TeamController extends Controller
 {
+    /**
+     * Get current team
+     *
+     * Returns the authenticated user's current team info, including plan and app count.
+     */
     public function show(Request $request): JsonResponse
     {
         $team = $request->user()->currentTeam;
@@ -20,12 +25,16 @@ class TeamController extends Controller
                 'slug' => $team->slug,
                 'plan' => $team->plan,
                 'app_count' => $team->apps()->count(),
-                'app_limit' => $team->appLimit(),
                 'created_at' => $team->created_at,
             ],
         ]);
     }
 
+    /**
+     * List team environment variables
+     *
+     * Returns all environment variables scoped to the current team. Secret values are masked.
+     */
     public function envIndex(Request $request): JsonResponse
     {
         $team = $request->user()->currentTeam;
@@ -44,6 +53,12 @@ class TeamController extends Controller
         return response()->json(['vars' => $vars]);
     }
 
+    /**
+     * Set team environment variables
+     *
+     * Batch upsert team-level environment variables. Only the team owner can perform this action.
+     * Keys must match `[A-Z_][A-Z0-9_]*`.
+     */
     public function envSet(Request $request): JsonResponse
     {
         $team = $request->user()->currentTeam;
@@ -73,6 +88,11 @@ class TeamController extends Controller
         return response()->json(['message' => 'Team environment variables updated.']);
     }
 
+    /**
+     * Delete team environment variable
+     *
+     * Remove a single team-level environment variable by key. Only the team owner can perform this action.
+     */
     public function envDestroy(Request $request, string $key): JsonResponse
     {
         $team = $request->user()->currentTeam;

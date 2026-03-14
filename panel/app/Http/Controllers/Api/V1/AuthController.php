@@ -11,6 +11,13 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    /**
+     * Create API token
+     *
+     * Exchange email and password credentials for a bearer token. No authentication required.
+     *
+     * @unauthenticated
+     */
     public function token(Request $request): JsonResponse
     {
         $request->validate([

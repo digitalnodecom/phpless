@@ -12,6 +12,11 @@ use Illuminate\Support\Facades\Gate;
 
 class EnvController extends Controller
 {
+    /**
+     * List app environment variables
+     *
+     * Returns merged environment variables for the app (team + app scope). App-level vars override team-level vars when keys collide. Secret values are masked.
+     */
     public function index(App $app, EnvironmentVariableService $envService): JsonResponse
     {
         Gate::authorize('view', $app);
@@ -28,6 +33,11 @@ class EnvController extends Controller
         return response()->json(['vars' => $vars->values()]);
     }
 
+    /**
+     * Set app environment variables
+     *
+     * Batch upsert app-level environment variables. Keys must match `[A-Z_][A-Z0-9_]*`.
+     */
     public function set(Request $request, App $app): JsonResponse
     {
         Gate::authorize('view', $app);
@@ -53,6 +63,11 @@ class EnvController extends Controller
         return response()->json(['message' => 'Environment variables updated.']);
     }
 
+    /**
+     * Delete app environment variable
+     *
+     * Remove a single app-level environment variable by key.
+     */
     public function destroy(App $app, string $key): JsonResponse
     {
         Gate::authorize('view', $app);

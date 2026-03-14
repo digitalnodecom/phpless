@@ -8,6 +8,11 @@ use Illuminate\Http\Request;
 
 class UserController extends Controller
 {
+    /**
+     * Get current user
+     *
+     * Returns the authenticated user's profile and their current team.
+     */
     public function show(Request $request): JsonResponse
     {
         $user = $request->user();
