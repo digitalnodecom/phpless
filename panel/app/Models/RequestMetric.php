@@ -17,6 +17,7 @@ class RequestMetric extends Model
         'status_4xx',
         'status_5xx',
         'bytes_sent',
+        'stripe_reported_at',
     ];
 
     protected function casts(): array
@@ -30,6 +31,7 @@ class RequestMetric extends Model
             'status_4xx' => 'integer',
             'status_5xx' => 'integer',
             'bytes_sent' => 'integer',
+            'stripe_reported_at' => 'datetime',
         ];
     }
 

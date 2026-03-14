@@ -15,7 +15,6 @@ class DashboardController extends Controller
 
         $totalApps = $team->apps()->count();
         $runningApps = $team->apps()->where('vm_state', 'running')->count();
-        $appLimit = $team->appLimit();
 
         try {
             $health = $vmManager->health();
@@ -29,7 +28,6 @@ class DashboardController extends Controller
             'stats' => [
                 'totalApps' => $totalApps,
                 'runningApps' => $runningApps,
-                'appLimit' => $appLimit,
                 'engineStatus' => $engineStatus,
                 'engineHealth' => $health,
             ],

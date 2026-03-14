@@ -4,8 +4,8 @@ namespace App\Services;
 
 use App\Models\App;
 use App\Models\Team;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 class AppLifecycleService
 {
@@ -16,10 +16,6 @@ class AppLifecycleService
 
     public function createApp(Team $team, array $data): App
     {
-        if ($team->apps()->count() >= $team->appLimit()) {
-            throw new RuntimeException("App limit reached for plan: {$team->plan}");
-        }
-
         $slug = $data['slug'] ?? Str::slug($data['name']);
 
         $app = $team->apps()->create([
@@ -66,7 +62,14 @@ class AppLifecycleService
             }
         }
 
+        // Clean up the build directory
+        $buildDir = base_path("../builds/{$app->slug}");
+        if (File::isDirectory($buildDir)) {
+            File::deleteDirectory($buildDir);
+        }
+
         $app->delete();
+
         $this->caddyConfig->regenerateAndReload();
     }
 

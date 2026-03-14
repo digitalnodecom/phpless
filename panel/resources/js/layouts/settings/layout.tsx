@@ -26,6 +26,16 @@ const sidebarNavItems: NavItem[] = [
         url: '/settings/api-tokens',
         icon: null,
     },
+    {
+        title: 'Billing',
+        url: '/settings/billing',
+        icon: null,
+    },
+    {
+        title: 'Team',
+        url: '/settings/team',
+        icon: null,
+    },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::job(new AggregateAppMetrics)->everyFiveMinutes();
+Schedule::command('billing:report-usage')->hourly();

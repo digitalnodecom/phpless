@@ -26,7 +26,7 @@ export default function Dashboard({ stats }: { stats: DashboardStats }) {
                                 <span className="text-muted-foreground text-sm font-normal"> / {stats.totalApps} total</span>
                             </div>
                             <p className="text-muted-foreground text-xs">
-                                {stats.appLimit - stats.totalApps} slots remaining ({stats.appLimit} max)
+                                {stats.totalApps - stats.runningApps} stopped
                             </p>
                         </CardContent>
                     </Card>
@@ -37,8 +37,8 @@ export default function Dashboard({ stats }: { stats: DashboardStats }) {
                             <Boxes className="text-muted-foreground h-4 w-4" />
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold capitalize">{stats.appLimit <= 3 ? 'Hobby' : stats.appLimit <= 10 ? 'Pro' : 'Enterprise'}</div>
-                            <p className="text-muted-foreground text-xs">Up to {stats.appLimit} apps</p>
+                            <div className="text-2xl font-bold capitalize">Pay-as-you-go</div>
+                            <p className="text-muted-foreground text-xs">Unlimited apps · billed by requests</p>
                         </CardContent>
                     </Card>
 

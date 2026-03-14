@@ -6,9 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Laravel\Cashier\Billable;
 
 class Team extends Model
 {
+    use Billable;
     protected $fillable = [
         'name',
         'slug',
@@ -36,12 +38,9 @@ class Team extends Model
         return $this->hasMany(EnvironmentVariable::class);
     }
 
-    public function appLimit(): int
+    public function invitations(): HasMany
     {
-        return match ($this->plan) {
-            'pro' => 10,
-            'enterprise' => 50,
-            default => 3, // hobby
-        };
+        return $this->hasMany(TeamInvitation::class);
     }
+
 }
