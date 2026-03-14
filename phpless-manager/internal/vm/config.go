@@ -60,8 +60,8 @@ func (c VMConfig) RootfsPath(tenantDir string) string {
 // BootArgs returns kernel boot arguments for this VM.
 func (c VMConfig) BootArgs() string {
 	args := fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off init=/init root=/dev/vda rw ip=%s::%s:%s::eth0:off",
-		c.IP, c.GatewayIP, c.Subnet,
+		"console=ttyS0 reboot=k panic=1 pci=off init=/init root=/dev/vda rw ip=%s::%s:%s::eth0:off phpless.slug=%s",
+		c.IP, c.GatewayIP, c.Subnet, c.Slug,
 	)
 	if c.Overlay {
 		args += " overlay=1"

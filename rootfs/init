@@ -13,7 +13,9 @@ mount -t tmpfs tmpfs /run || true
 
 echo "[phpless-init] Filesystems mounted"
 
-hostname phpless || true
+# Set hostname from kernel boot arg phpless.slug=<slug>, fallback to "phpless"
+SLUG=$(cat /proc/cmdline | tr ' ' '\n' | grep '^phpless.slug=' | cut -d= -f2)
+hostname "${SLUG:-phpless}" || true
 ip link set lo up || true
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "nameserver 1.1.1.1" >> /etc/resolv.conf
