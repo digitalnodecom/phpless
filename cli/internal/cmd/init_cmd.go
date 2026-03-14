@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/BurntSushi/toml"
+	"github.com/phpless/cli/internal/archive"
 	"github.com/phpless/cli/internal/config"
 	"github.com/phpless/cli/internal/ui"
 	"github.com/spf13/cobra"
@@ -45,6 +46,17 @@ func newInitCmd() *cobra.Command {
 
 			ui.Success("Created .phpless.toml")
 			fmt.Printf("  app = %q\n", slug)
+
+			// Create .phplessignore if it doesn't exist
+			const ignoreFile = ".phplessignore"
+			if _, err := os.Stat(ignoreFile); os.IsNotExist(err) {
+				if err := os.WriteFile(ignoreFile, []byte(archive.DefaultIgnoreRules), 0644); err != nil {
+					ui.Warn("Could not create %s: %s", ignoreFile, err)
+				} else {
+					ui.Success("Created %s", ignoreFile)
+				}
+			}
+
 			return nil
 		},
 	}

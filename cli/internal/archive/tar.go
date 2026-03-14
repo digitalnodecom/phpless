@@ -14,11 +14,22 @@ import (
 
 var defaultExcludes = []string{
 	".git",
-	"node_modules",
 	".phpless.toml",
-	".DS_Store",
-	"__MACOSX",
+	".phplessignore",
 }
+
+// DefaultIgnoreRules are written to .phplessignore on `phpless init`.
+var DefaultIgnoreRules = `.git/
+.phpless.toml
+.phplessignore
+node_modules/
+vendor/
+.DS_Store
+__MACOSX/
+*.log
+.env
+.env.*
+`
 
 // CreateTarGz creates a tar.gz archive of the given directory.
 // It respects .gitignore patterns and default exclusions.
@@ -29,7 +40,7 @@ func CreateTarGz(dir string) (*bytes.Buffer, int, error) {
 		return nil, 0, err
 	}
 
-	ignorePatterns := loadGitignore(dir)
+	ignorePatterns := loadIgnoreFile(dir)
 
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
@@ -118,11 +129,23 @@ func shouldExclude(relPath string, isDir bool, ignorePatterns []string) bool {
 	return false
 }
 
-func loadGitignore(dir string) []string {
-	path := filepath.Join(dir, ".gitignore")
+// loadIgnoreFile loads .phplessignore if it exists, otherwise falls back to .gitignore.
+func loadIgnoreFile(dir string) []string {
+	// Prefer .phplessignore
+	for _, name := range []string{".phplessignore", ".gitignore"} {
+		path := filepath.Join(dir, name)
+		patterns, err := parseIgnoreFile(path)
+		if err == nil {
+			return patterns
+		}
+	}
+	return nil
+}
+
+func parseIgnoreFile(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer f.Close()
 
@@ -135,7 +158,7 @@ func loadGitignore(dir string) []string {
 		}
 		patterns = append(patterns, line)
 	}
-	return patterns
+	return patterns, nil
 }
 
 func matchPattern(pattern, path string, isDir bool) bool {
