@@ -45,6 +45,9 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
+            'currentTeam' => $request->user()?->currentTeam?->only('id', 'name', 'slug'),
+            'userTeams' => $request->user()?->teams->map->only('id', 'name', 'slug'),
+            'registrationOpen' => config('phpless.registration_open'),
         ]);
     }
 }

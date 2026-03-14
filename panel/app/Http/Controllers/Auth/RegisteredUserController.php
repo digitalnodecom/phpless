@@ -20,7 +20,11 @@ class RegisteredUserController extends Controller
      */
     public function create(): Response
     {
-        return Inertia::render('auth/register');
+        if (! config('phpless.registration_open')) {
+            return Inertia::render('auth/register', ['registrationOpen' => false]);
+        }
+
+        return Inertia::render('auth/register', ['registrationOpen' => true]);
     }
 
     /**
@@ -30,6 +34,8 @@ class RegisteredUserController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
+        abort_if(! config('phpless.registration_open'), 403, 'Registrations are currently closed.');
+
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|lowercase|email|max:255|unique:'.User::class,

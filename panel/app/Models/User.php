@@ -27,12 +27,19 @@ class User extends Authenticatable
         'remember_token',
     ];
 
+    protected $appends = ['is_admin'];
+
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function getIsAdminAttribute(): bool
+    {
+        return $this->email === config('phpless.admin_email');
     }
 
     public function teams(): BelongsToMany

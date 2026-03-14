@@ -1,6 +1,7 @@
-import { Head, useForm } from '@inertiajs/react';
+import { Head, useForm, usePage } from '@inertiajs/react';
 import { LoaderCircle } from 'lucide-react';
 import { FormEventHandler } from 'react';
+import { type SharedData } from '@/types';
 
 import InputError from '@/components/input-error';
 import TextLink from '@/components/text-link';
@@ -22,6 +23,7 @@ interface LoginProps {
 }
 
 export default function Login({ status, canResetPassword }: LoginProps) {
+    const { registrationOpen } = usePage<SharedData>().props;
     const { data, setData, post, processing, errors, reset } = useForm<LoginForm>({
         email: '',
         password: '',
@@ -90,12 +92,14 @@ export default function Login({ status, canResetPassword }: LoginProps) {
                     </Button>
                 </div>
 
-                <div className="text-muted-foreground text-center text-sm">
-                    Don't have an account?{' '}
-                    <TextLink href={route('register')} tabIndex={5}>
-                        Sign up
-                    </TextLink>
-                </div>
+                {registrationOpen && (
+                    <div className="text-muted-foreground text-center text-sm">
+                        Don't have an account?{' '}
+                        <TextLink href={route('register')} tabIndex={5}>
+                            Sign up
+                        </TextLink>
+                    </div>
+                )}
             </form>
 
             {status && <div className="mb-4 text-center text-sm font-medium text-green-600">{status}</div>}

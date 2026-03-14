@@ -3,8 +3,9 @@ import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { type NavItem } from '@/types';
+import { usePage } from '@inertiajs/react';
+import { BookOpen, Boxes, Code2, LayoutGrid, Settings, ShieldCheck } from 'lucide-react';
 import { Link } from '@inertiajs/react';
-import { BookOpen, Boxes, LayoutGrid, Settings } from 'lucide-react';
 import AppLogo from './app-logo';
 
 const mainNavItems: NavItem[] = [
@@ -31,9 +32,20 @@ const footerNavItems: NavItem[] = [
         url: '/docs',
         icon: BookOpen,
     },
+    {
+        title: 'API Reference',
+        url: '/docs/api',
+        icon: Code2,
+    },
 ];
 
 export function AppSidebar() {
+    const { auth } = usePage<{ auth: { user: { is_admin: boolean } } }>().props;
+
+    const allNavItems = auth.user.is_admin
+        ? [...mainNavItems, { title: 'Admin', url: '/admin', icon: ShieldCheck }]
+        : mainNavItems;
+
     return (
         <Sidebar collapsible="icon" variant="inset">
             <SidebarHeader>
@@ -49,7 +61,7 @@ export function AppSidebar() {
             </SidebarHeader>
 
             <SidebarContent>
-                <NavMain items={mainNavItems} />
+                <NavMain items={allNavItems} />
             </SidebarContent>
 
             <SidebarFooter>

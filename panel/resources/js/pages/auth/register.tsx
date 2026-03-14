@@ -1,4 +1,4 @@
-import { Head, useForm } from '@inertiajs/react';
+import { Head, useForm, usePage } from '@inertiajs/react';
 import { LoaderCircle } from 'lucide-react';
 import { FormEventHandler } from 'react';
 
@@ -17,6 +17,7 @@ interface RegisterForm {
 }
 
 export default function Register() {
+    const { registrationOpen } = usePage<{ registrationOpen: boolean }>().props;
     const { data, setData, post, processing, errors, reset } = useForm<RegisterForm>({
         name: '',
         email: '',
@@ -30,6 +31,17 @@ export default function Register() {
             onFinish: () => reset('password', 'password_confirmation'),
         });
     };
+
+    if (!registrationOpen) {
+        return (
+            <AuthLayout title="Registrations closed" description="New accounts are not being accepted at this time.">
+                <Head title="Register" />
+                <div className="text-muted-foreground text-center text-sm">
+                    <TextLink href={route('login')}>Back to login</TextLink>
+                </div>
+            </AuthLayout>
+        );
+    }
 
     return (
         <AuthLayout title="Create an account" description="Enter your details below to create your account">
