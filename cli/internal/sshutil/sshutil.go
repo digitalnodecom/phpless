@@ -80,7 +80,7 @@ func RunCommand(slug, command string) (*ExecResult, error) {
 	session.Stdout = &stdoutBuf
 	session.Stderr = &stderrBuf
 
-	err = session.Run(command)
+	err = session.Run("cd /app && " + command)
 
 	exitCode := 0
 	if err != nil {

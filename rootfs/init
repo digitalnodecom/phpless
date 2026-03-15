@@ -88,6 +88,9 @@ if [ -f /app/.caddyfile ]; then
     echo "[phpless-init] Using app-specific Caddyfile"
 fi
 
+# Set default directory to /app for SSH sessions
+echo 'cd /app' >> /root/.bashrc
+
 # Start SSH server if manager has injected an authorised key
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 mkdir -p /run/sshd && chmod 755 /run/sshd
