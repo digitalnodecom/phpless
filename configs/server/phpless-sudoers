@@ -1,1 +1,2 @@
-www-data ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy
+www-data ALL=(root) NOPASSWD: /usr/local/bin/phpless-caddy-reload
+www-data ALL=(root) NOPASSWD: /usr/local/bin/phpless-read-log
