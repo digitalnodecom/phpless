@@ -462,38 +462,6 @@ class AppController extends Controller
     }
 
     /**
-     * Execute command
-     *
-     * Execute a shell command inside the app's Firecracker microVM via SSH.
-     * Returns stdout, stderr, and exit code. Commands are subject to a timeout (default 30s, max 300s).
-     */
-    public function exec(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
-    {
-        Gate::authorize('view', $app);
-
-        if (! $app->vm_ip || $app->vm_state !== 'running') {
-            return response()->json(['message' => 'App is not running.'], 422);
-        }
-
-        $validated = $request->validate([
-            'command' => ['required', 'string', 'max:10000'],
-            'timeout' => ['sometimes', 'integer', 'min:1', 'max:300'],
-        ]);
-
-        try {
-            $result = $vmManager->execCommand(
-                $app->vm_ip,
-                $validated['command'],
-                $validated['timeout'] ?? 30,
-            );
-
-            return response()->json($result);
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 502);
-        }
-    }
-
-    /**
      * Verify SSH access
      *
      * Verify that the authenticated user has access to an app and return the VM IP.

@@ -513,27 +513,6 @@ func (c *Client) DownloadStorage(slug, path string) (io.ReadCloser, string, erro
 	return resp.Body, filename, nil
 }
 
-// --- Exec ---
-
-type ExecResponse struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
-}
-
-func (c *Client) ExecCommand(slug, command string, timeout int) (*ExecResponse, error) {
-	body := map[string]any{
-		"command": command,
-	}
-	if timeout > 0 {
-		body["timeout"] = timeout
-	}
-
-	var resp ExecResponse
-	err := c.do("POST", "/apps/"+slug+"/exec", body, &resp)
-	return &resp, err
-}
-
 // --- Environment Variables ---
 
 type EnvVar struct {

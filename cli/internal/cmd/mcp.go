@@ -12,6 +12,7 @@ import (
 	"github.com/phpless/cli/internal/api"
 	"github.com/phpless/cli/internal/archive"
 	"github.com/phpless/cli/internal/config"
+	"github.com/phpless/cli/internal/sshutil"
 	"github.com/spf13/cobra"
 )
 
@@ -147,13 +148,12 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("slug", mcp.Description("App slug (required when scope is 'app')")),
 	), handleSetEnv)
 
-	// exec_command
-	s.AddTool(mcp.NewTool("exec_command",
-		mcp.WithDescription("Execute a shell command inside an app's Firecracker microVM. Returns stdout, stderr, and exit code. Use for running artisan commands, checking PHP status, inspecting the filesystem, etc."),
+	// ssh_exec
+	s.AddTool(mcp.NewTool("ssh_exec",
+		mcp.WithDescription("Execute a shell command inside an app's VM via SSH. Returns stdout, stderr, and exit code. Use for running artisan commands, checking PHP status, inspecting the filesystem, etc."),
 		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
 		mcp.WithString("command", mcp.Required(), mcp.Description("Shell command to execute (e.g. 'ls -la /app', 'php artisan migrate')")),
-		mcp.WithNumber("timeout", mcp.Description("Timeout in seconds (default 30, max 300)")),
-	), handleExecCommand)
+	), handleSSHExec)
 
 	// delete_env
 	s.AddTool(mcp.NewTool("delete_env",
@@ -253,7 +253,7 @@ func handleDeleteApp(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
 	return jsonResult(resp)
 }
 
-func handleExecCommand(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func handleSSHExec(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	slug, err := req.RequireString("slug")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -262,14 +262,8 @@ func handleExecCommand(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	timeout := req.GetInt("timeout", 30)
 
-	client, err := mcpClient()
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	resp, err := client.ExecCommand(slug, command, timeout)
+	resp, err := sshutil.RunCommand(slug, command)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

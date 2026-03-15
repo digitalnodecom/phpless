@@ -1,13 +1,12 @@
 package cmd
 
 import (
-	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/phpless/cli/internal/config"
+	"github.com/phpless/cli/internal/sshutil"
 	"github.com/phpless/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
@@ -40,24 +39,12 @@ Examples:
 				os.Exit(1)
 			}
 
-			// Determine SSH proxy host from API URL
-			host := sshProxyHost(cfg.APIURL)
+			host := sshutil.ProxyHost(cfg.APIURL)
+			ui.Dim("Connecting to %s via %s:%s...", slug, host, sshutil.ProxyPort)
 
-			ui.Dim("Connecting to %s via %s:7068...", slug, host)
-
-			sshConfig := &ssh.ClientConfig{
-				User:            slug,
-				Auth:            []ssh.AuthMethod{ssh.Password(cfg.Token)},
-				HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
-			}
-
-			conn, err := ssh.Dial("tcp", host+":7068", sshConfig)
+			conn, err := sshutil.Dial(slug)
 			if err != nil {
-				if strings.Contains(err.Error(), "unable to authenticate") {
-					ui.Error("Authentication failed. Check your app slug and login status.")
-				} else {
-					ui.Error("Connection failed: %s", err)
-				}
+				ui.Error("%s", err)
 				os.Exit(1)
 			}
 			defer conn.Close()
@@ -128,22 +115,4 @@ Examples:
 	cmd.Flags().StringVarP(&appSlug, "app", "a", "", "App slug")
 
 	return cmd
-}
-
-// sshProxyHost extracts the hostname from the API URL.
-func sshProxyHost(apiURL string) string {
-	// Strip protocol
-	host := apiURL
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
-	}
-	// Strip path
-	if i := strings.Index(host, "/"); i >= 0 {
-		host = host[:i]
-	}
-	// Strip port
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	return host
 }

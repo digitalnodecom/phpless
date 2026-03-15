@@ -65,12 +65,6 @@ func (s *Server) Router() *chi.Mux {
 		r.Delete("/port-mappings", s.removePortMappings)
 	})
 
-	// Exec has its own timeout (up to 5 min)
-	r.Group(func(r chi.Router) {
-		r.Use(middleware.Timeout(5 * time.Minute))
-		r.Post("/exec", s.execCommand)
-	})
-
 	return r
 }
 
@@ -406,15 +400,6 @@ func (s *Server) proxyWorkerLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	body, _ := io.ReadAll(resp.Body)
 	w.Write(body)
-}
-
-func (s *Server) execCommand(w http.ResponseWriter, r *http.Request) {
-	if s.sshSigner == nil {
-		httpError(w, http.StatusServiceUnavailable, "SSH not configured")
-		return
-	}
-	// Increase timeout for this handler — exec can run up to 5 min
-	terminal.HandleExec(s.sshSigner).ServeHTTP(w, r)
 }
 
 // --- Helpers ---
