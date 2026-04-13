@@ -8,7 +8,7 @@ import (
 )
 
 // DeployToOverlay mounts a tenant's overlay image and syncs app code into it.
-func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string) error {
+func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool) error {
 	if _, err := os.Stat(overlayPath); os.IsNotExist(err) {
 		return fmt.Errorf("overlay image not found: %s", overlayPath)
 	}
@@ -76,6 +76,18 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 		os.Remove(filepath.Join(etcDir, "phpless-workers.json"))
 	}
 
+	// Write crontab for Laravel scheduler if cron is enabled
+	if cronEnabled {
+		cronDir := filepath.Join(mountDir, "var", "spool", "cron", "crontabs")
+		os.MkdirAll(cronDir, 0755)
+		crontab := "* * * * * cd /app && php artisan schedule:run >> /var/log/cron.log 2>&1\n"
+		if err := os.WriteFile(filepath.Join(cronDir, "root"), []byte(crontab), 0600); err != nil {
+			return fmt.Errorf("write crontab: %w", err)
+		}
+	} else {
+		os.Remove(filepath.Join(mountDir, "var", "spool", "cron", "crontabs", "root"))
+	}
+
 	// Create /app/storage structure in overlay upper layer
 	upperStorage := filepath.Join(mountDir, "upper", "app", "storage")
 	os.MkdirAll(upperStorage, 0777)
@@ -94,7 +106,7 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 // requiring a full rootfs rebuild.
 var InitScriptPath = "/srv/firecracker/base/rootfs/init"
 
-func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string) error {
+func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool) error {
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs image not found: %s", rootfsPath)
 	}
@@ -124,6 +136,11 @@ func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envCont
 	if binData, err := os.ReadFile(workersBin); err == nil {
 		os.MkdirAll(filepath.Join(mountDir, "usr", "local", "bin"), 0755)
 		os.WriteFile(filepath.Join(mountDir, "usr", "local", "bin", "phpless-workers"), binData, 0755)
+	}
+	lsHelper := filepath.Join(baseDir, "usr", "local", "lib", "phpless-ls.php")
+	if data, err := os.ReadFile(lsHelper); err == nil {
+		os.MkdirAll(filepath.Join(mountDir, "usr", "local", "lib"), 0755)
+		os.WriteFile(filepath.Join(mountDir, "usr", "local", "lib", "phpless-ls.php"), data, 0644)
 	}
 
 	appDir2 := filepath.Join(mountDir, "app")
@@ -164,6 +181,18 @@ func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envCont
 		}
 	} else {
 		os.Remove(filepath.Join(mountDir, "etc", "phpless-workers.json"))
+	}
+
+	// Write crontab for Laravel scheduler if cron is enabled
+	if cronEnabled {
+		cronDir := filepath.Join(mountDir, "var", "spool", "cron", "crontabs")
+		os.MkdirAll(cronDir, 0755)
+		crontab := "* * * * * cd /app && php artisan schedule:run >> /var/log/cron.log 2>&1\n"
+		if err := os.WriteFile(filepath.Join(cronDir, "root"), []byte(crontab), 0600); err != nil {
+			return fmt.Errorf("write crontab: %w", err)
+		}
+	} else {
+		os.Remove(filepath.Join(mountDir, "var", "spool", "cron", "crontabs", "root"))
 	}
 
 	// Create /app/storage structure — runtime dirs are excluded from rsync so they survive redeploys

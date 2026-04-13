@@ -34,7 +34,7 @@ func NewPortForwarder(extIface, brIface string) *PortForwarder {
 // Apply sets up iptables rules to forward external ports to a VM.
 // First removes ALL existing PREROUTING rules for the given external ports
 // (regardless of which IP they previously pointed to), then adds new rules.
-func (pf *PortForwarder) Apply(vmIP string, mappings []PortMapping) error {
+func (pf *PortForwarder) Apply(vmIP string, mappings []PortMapping, allowedIPs []string) error {
 	pf.mu.Lock()
 	defer pf.mu.Unlock()
 
@@ -51,27 +51,43 @@ func (pf *PortForwarder) Apply(vmIP string, mappings []PortMapping) error {
 		// Flush any existing rules for this external port (from any previous VM IP)
 		pf.flushPort(m.External, proto)
 
-		// PREROUTING DNAT: packets arriving on external interface → VM IP:port
-		if err := iptablesRun("-t", "nat", "-A", "PREROUTING",
-			"-i", pf.extIface,
-			"-p", proto, "--dport", fmt.Sprintf("%d", m.External),
-			"-j", "DNAT", "--to-destination", fmt.Sprintf("%s:%d", vmIP, m.Internal)); err != nil {
-			return fmt.Errorf("DNAT rule for port %d: %w", m.External, err)
+		// If allowlist is set, create one rule per allowed source IP.
+		// Otherwise, create a single rule allowing all sources.
+		sources := allowedIPs
+		if len(sources) == 0 {
+			sources = []string{""} // empty string = no -s flag
 		}
 
-		// FORWARD: allow traffic from external interface to bridge
-		if err := iptablesRun("-I", "FORWARD", "1",
-			"-i", pf.extIface, "-o", pf.brIface,
-			"-p", proto, "-d", vmIP, "--dport", fmt.Sprintf("%d", m.Internal),
-			"-j", "ACCEPT"); err != nil {
-			return fmt.Errorf("FORWARD rule for port %d: %w", m.Internal, err)
+		for _, src := range sources {
+			// PREROUTING DNAT
+			args := []string{"-t", "nat", "-A", "PREROUTING", "-i", pf.extIface}
+			if src != "" {
+				args = append(args, "-s", src)
+			}
+			args = append(args, "-p", proto, "--dport", fmt.Sprintf("%d", m.External),
+				"-j", "DNAT", "--to-destination", fmt.Sprintf("%s:%d", vmIP, m.Internal))
+			if err := iptablesRun(args...); err != nil {
+				return fmt.Errorf("DNAT rule for port %d src %s: %w", m.External, src, err)
+			}
+
+			// FORWARD
+			fwdArgs := []string{"-I", "FORWARD", "1", "-i", pf.extIface, "-o", pf.brIface}
+			if src != "" {
+				fwdArgs = append(fwdArgs, "-s", src)
+			}
+			fwdArgs = append(fwdArgs, "-p", proto, "-d", vmIP, "--dport", fmt.Sprintf("%d", m.Internal),
+				"-j", "ACCEPT")
+			if err := iptablesRun(fwdArgs...); err != nil {
+				return fmt.Errorf("FORWARD rule for port %d src %s: %w", m.Internal, src, err)
+			}
 		}
 
 		log.WithFields(log.Fields{
-			"vm_ip":    vmIP,
-			"external": m.External,
-			"internal": m.Internal,
-			"protocol": proto,
+			"vm_ip":      vmIP,
+			"external":   m.External,
+			"internal":   m.Internal,
+			"protocol":   proto,
+			"allowed_ips": len(allowedIPs),
 		}).Info("Port forwarding rule applied")
 	}
 

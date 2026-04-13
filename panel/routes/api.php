@@ -5,11 +5,15 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\EnvController;
 use App\Http\Controllers\Api\V1\TeamController;
 use App\Http\Controllers\Api\V1\UserController;
+use App\Http\Controllers\Api\V1\WebhookController;
 use App\Http\Middleware\EnsureApiTeam;
 use Illuminate\Support\Facades\Route;
 
 // Public: exchange credentials for token
 Route::post('v1/auth/token', [AuthController::class, 'token']);
+
+// Public: GitHub webhook (verified by signature, not auth token)
+Route::post('v1/webhooks/github/{app:slug}', [WebhookController::class, 'github']);
 
 // Authenticated API routes
 Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(function () {

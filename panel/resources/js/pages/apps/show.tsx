@@ -1,3 +1,4 @@
+import React from 'react';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -21,13 +22,13 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import AppLayout from '@/layouts/app-layout';
-import { type AnalyticsSummary, type App, type BreadcrumbItem, type Domain, type EnvironmentVariable, type FileItem, type LogEntry, type RequestMetric, type WorkerDef, type WorkerStatus } from '@/types';
+import { type AnalyticsSummary, type App, type BreadcrumbItem, type Deployment, type Domain, type EnvironmentVariable, type FileItem, type LogEntry, type RequestMetric, type WorkerDef, type WorkerStatus } from '@/types';
 import { Head, router } from '@inertiajs/react';
 import { toast } from 'sonner';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { Activity, BarChart3, CheckCircle, ChevronRight, Clock, Copy, Download, Eye, EyeOff, ExternalLink, File as FileIcon, Folder, FolderOpen, Globe, Lock, LockOpen, Pencil, Plus, RefreshCw, Rocket, Server, Terminal as TerminalIcon, Trash2, Upload, Zap } from 'lucide-react';
+import { Activity, BarChart3, CheckCircle, ChevronDown, ChevronRight, Clock, Copy, Download, Eye, EyeOff, ExternalLink, File as FileIcon, Folder, FolderOpen, GitBranch, Globe, Hammer, Link2, Link2Off, Lock, LockOpen, Pencil, Plus, RefreshCw, Rocket, Server, Shield, Terminal as TerminalIcon, Trash2, Upload, X, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 function stateVariant(state: string) {
@@ -985,6 +986,8 @@ function SettingsTab({ app }: { app: App }) {
     const [webRoot, setWebRoot] = useState(app.web_root || '/');
     const [vcpus, setVcpus] = useState(String(app.vcpus));
     const [memMib, setMemMib] = useState(String(app.mem_mib));
+    const [buildCommand, setBuildCommand] = useState(app.build_command || '');
+    const [cronEnabled, setCronEnabled] = useState(app.cron_enabled);
     const [saving, setSaving] = useState(false);
     const [generatingKeys, setGeneratingKeys] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -995,6 +998,8 @@ function SettingsTab({ app }: { app: App }) {
         workerScript !== app.worker_script ||
         workerCount !== app.worker_count ||
         mercureEnabled !== app.mercure_enabled ||
+        cronEnabled !== app.cron_enabled ||
+        buildCommand !== (app.build_command || '') ||
         webRoot !== (app.web_root || '/') ||
         vmSizeChanged;
 
@@ -1031,6 +1036,8 @@ function SettingsTab({ app }: { app: App }) {
                     worker_script: workerScript,
                     worker_count: workerCount,
                     mercure_enabled: mercureEnabled,
+                    build_command: buildCommand || null,
+                    cron_enabled: cronEnabled,
                     web_root: webRoot,
                     vcpus: parseInt(vcpus),
                     mem_mib: parseInt(memMib),
@@ -1147,6 +1154,43 @@ function SettingsTab({ app }: { app: App }) {
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
+                        <Hammer className="h-4 w-4" />
+                        Build Command
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    <div className="space-y-2">
+                        <Label htmlFor="build-command">Command to run after deploy</Label>
+                        <Input
+                            id="build-command"
+                            value={buildCommand}
+                            onChange={(e) => setBuildCommand(e.target.value)}
+                            placeholder={
+                                app.detected_framework === 'laravel'
+                                    ? 'composer install --no-dev --optimize-autoloader && php artisan config:cache && php artisan route:cache && php artisan view:cache'
+                                    : app.detected_framework && app.detected_framework !== 'vanilla'
+                                        ? 'composer install --no-dev --optimize-autoloader'
+                                        : 'e.g. composer install --no-dev'
+                            }
+                            className="max-w-full font-mono text-sm"
+                        />
+                    </div>
+                    {app.detected_framework && app.detected_framework !== 'vanilla' && (
+                        <p className="text-muted-foreground text-xs">
+                            Detected framework: <strong>{app.detected_framework}</strong>.
+                            {!buildCommand && ' The default build command will be used on next deploy.'}
+                        </p>
+                    )}
+                    <p className="text-muted-foreground text-xs">
+                        Runs inside the VM after code is synced. Use this for <code className="bg-muted rounded px-1 py-0.5">composer install</code>,{' '}
+                        cache warming, or other build steps. If the command fails, the deployment is marked as failed.
+                    </p>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
                         <Zap className="h-4 w-4" />
                         Worker Mode
                     </CardTitle>
@@ -1236,6 +1280,45 @@ function SettingsTab({ app }: { app: App }) {
                 </CardContent>
             </Card>
 
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <Clock className="h-4 w-4" />
+                        Scheduled Tasks
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                        <Checkbox
+                            id="cron-enabled"
+                            checked={cronEnabled}
+                            onCheckedChange={(v) => setCronEnabled(v === true)}
+                        />
+                        <Label htmlFor="cron-enabled" className="text-sm font-normal">
+                            Enable Laravel Scheduler
+                        </Label>
+                    </div>
+
+                    {cronEnabled && (
+                        <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3">
+                            <p className="text-sm">
+                                Runs <code className="bg-muted rounded px-1 py-0.5">php artisan schedule:run</code> every minute inside your VM.
+                            </p>
+                        </div>
+                    )}
+
+                    <p className="text-muted-foreground text-xs">
+                        Enables the Laravel task scheduler via cron. Define your scheduled tasks in{' '}
+                        <code className="bg-muted rounded px-1 py-0.5">app/Console/Kernel.php</code> or using the{' '}
+                        <code className="bg-muted rounded px-1 py-0.5">Schedule</code> facade. Requires redeploy.
+                    </p>
+                </CardContent>
+            </Card>
+
+            <IpAllowlistCard app={app} />
+
+            <PortForwardingCard app={app} />
+
             <div className="flex items-center gap-3">
                 <Button onClick={handleSave} disabled={saving || !hasChanges}>
                     {saving ? (vmSizeChanged ? 'Resizing VM...' : 'Saving...') : 'Save Settings'}
@@ -1245,9 +1328,186 @@ function SettingsTab({ app }: { app: App }) {
                 )}
             </div>
 
-            <PortForwardingCard app={app} />
+            <DangerZoneCard app={app} />
         </div>
     );
+}
+
+function GitHubConnectCard({ app }: { app: App }) {
+    const [repo, setRepo] = useState(app.github_repo || '');
+    const [branch, setBranch] = useState(app.github_branch || 'main');
+    const [connecting, setConnecting] = useState(false);
+    const [disconnecting, setDisconnecting] = useState(false);
+    const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
+    const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
+    const [copied, setCopied] = useState<string | null>(null);
+    const [deploying, setDeploying] = useState(false);
+
+    const isConnected = !!app.github_repo;
+
+    const copy = (text: string, key: string) => {
+        navigator.clipboard.writeText(text);
+        setCopied(key);
+        setTimeout(() => setCopied(null), 2000);
+    };
+
+    const handleConnect = () => {
+        if (!repo.trim()) return;
+        setConnecting(true);
+        fetch(`/apps/${app.id}/github/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '' },
+            body: JSON.stringify({ github_repo: repo.trim(), github_branch: branch.trim() || 'main' }),
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                setWebhookUrl(data.webhook_url);
+                setWebhookSecret(data.webhook_secret);
+                toast.success('GitHub connected');
+                router.reload({ only: ['app'] });
+            })
+            .catch(() => toast.error('Failed to connect'))
+            .finally(() => setConnecting(false));
+    };
+
+    const handleDisconnect = () => {
+        setDisconnecting(true);
+        fetch(`/apps/${app.id}/github/disconnect`, {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '' },
+        })
+            .then(() => {
+                setWebhookUrl(null);
+                setWebhookSecret(null);
+                setRepo('');
+                toast.success('GitHub disconnected');
+                router.reload({ only: ['app'] });
+            })
+            .catch(() => toast.error('Failed to disconnect'))
+            .finally(() => setDisconnecting(false));
+    };
+
+    const handleDeployFromGit = () => {
+        setDeploying(true);
+        fetch(`/apps/${app.id}/github/deploy`, {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '' },
+        })
+            .then((r) => r.json())
+            .then(() => {
+                toast.success('Deploy from GitHub queued');
+                router.reload({ only: ['app'] });
+            })
+            .catch(() => toast.error('Failed to queue deploy'))
+            .finally(() => setDeploying(false));
+    };
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                    <GitBranch className="h-4 w-4" />
+                    GitHub Integration
+                    {isConnected && <Badge variant="default" className="ml-2 text-xs">Connected</Badge>}
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {isConnected ? (
+                    <>
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Repository:</span>
+                                <code className="font-mono text-sm">{app.github_repo}</code>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Branch:</span>
+                                <code className="font-mono text-sm">{app.github_branch}</code>
+                            </div>
+                        </div>
+
+                        {(webhookUrl || webhookSecret) && (
+                            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                                <p className="text-xs font-medium">Webhook Setup</p>
+                                <p className="text-muted-foreground text-xs">Add this URL as a webhook in your GitHub repo settings (Settings &rarr; Webhooks &rarr; Add webhook).</p>
+                                {webhookUrl && (
+                                    <div className="flex items-center justify-between rounded-md border bg-muted/50 px-3 py-1.5">
+                                        <code className="break-all font-mono text-xs">{webhookUrl}</code>
+                                        <Button variant="ghost" size="sm" onClick={() => copy(webhookUrl, 'webhook-url')}>
+                                            {copied === 'webhook-url' ? <CheckCircle className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+                                        </Button>
+                                    </div>
+                                )}
+                                {webhookSecret && (
+                                    <>
+                                        <p className="text-xs font-medium">Secret</p>
+                                        <div className="flex items-center justify-between rounded-md border bg-muted/50 px-3 py-1.5">
+                                            <code className="break-all font-mono text-xs">{webhookSecret}</code>
+                                            <Button variant="ghost" size="sm" onClick={() => copy(webhookSecret, 'webhook-secret')}>
+                                                {copied === 'webhook-secret' ? <CheckCircle className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+                                            </Button>
+                                        </div>
+                                        <p className="text-muted-foreground text-xs">Set Content type to <code className="text-xs">application/json</code> and paste this secret.</p>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex gap-2">
+                            <Button onClick={handleDeployFromGit} disabled={deploying} size="sm">
+                                <Rocket className={`mr-2 h-3 w-3 ${deploying ? 'animate-spin' : ''}`} />
+                                {deploying ? 'Deploying...' : 'Deploy from GitHub'}
+                            </Button>
+                            <Button variant="outline" onClick={handleDisconnect} disabled={disconnecting} size="sm">
+                                <Link2Off className="mr-2 h-3 w-3" />
+                                {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+                            </Button>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        <p className="text-muted-foreground text-sm">
+                            Connect a GitHub repository to enable automatic deployments on push.
+                        </p>
+                        <div className="space-y-3">
+                            <div>
+                                <Label htmlFor="github-repo" className="text-xs">Repository</Label>
+                                <Input
+                                    id="github-repo"
+                                    placeholder="https://github.com/user/repo or user/repo"
+                                    value={repo}
+                                    onChange={(e) => setRepo(e.target.value)}
+                                    className="mt-1 font-mono text-sm"
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="github-branch" className="text-xs">Branch</Label>
+                                <Input
+                                    id="github-branch"
+                                    placeholder="main"
+                                    value={branch}
+                                    onChange={(e) => setBranch(e.target.value)}
+                                    className="mt-1 font-mono text-sm"
+                                />
+                            </div>
+                            <Button onClick={handleConnect} disabled={connecting || !repo.trim()} size="sm">
+                                <Link2 className="mr-2 h-3 w-3" />
+                                {connecting ? 'Connecting...' : 'Connect'}
+                            </Button>
+                        </div>
+                    </>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+function commitUrl(repo: string | null, sha: string): string | null {
+    if (!repo) return null;
+    let base = repo.trim();
+    if (base.match(/^[\w.-]+\/[\w.-]+$/)) base = `https://github.com/${base}`;
+    base = base.replace(/\.git$/, '');
+    if (!base.startsWith('https://')) return null;
+    return `${base}/commit/${sha}`;
 }
 
 function DeployTab({ app }: { app: App }) {
@@ -1264,6 +1524,8 @@ function DeployTab({ app }: { app: App }) {
 
     return (
         <div className="space-y-4">
+            <GitHubConnectCard app={app} />
+
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
@@ -1305,51 +1567,105 @@ function DeployTab({ app }: { app: App }) {
                     {!app.deployments || app.deployments.length === 0 ? (
                         <p className="text-muted-foreground py-4 text-center text-sm">No deployments yet.</p>
                     ) : (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr className="text-muted-foreground border-b text-left text-xs">
-                                        <th className="pb-2 pr-4">Status</th>
-                                        <th className="pb-2 pr-4">Source</th>
-                                        <th className="pb-2 pr-4">Message</th>
-                                        <th className="pb-2 pr-4">By</th>
-                                        <th className="pb-2 pr-4">Deployed</th>
-                                        <th className="pb-2">Duration</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {app.deployments.map((d) => (
-                                        <tr key={d.id} className="border-b last:border-0">
-                                            <td className="py-2 pr-4">
-                                                <Badge variant={d.status === 'succeeded' ? 'default' : d.status === 'failed' ? 'destructive' : 'secondary'}>
-                                                    {d.status}
-                                                </Badge>
-                                            </td>
-                                            <td className="py-2 pr-4">
-                                                <Badge variant="outline" className="font-mono text-xs">
-                                                    {d.source ?? 'api'}
-                                                </Badge>
-                                            </td>
-                                            <td className="py-2 pr-4 text-xs">{d.commit_message || '-'}</td>
-                                            <td className="text-muted-foreground py-2 pr-4 text-xs whitespace-nowrap">
-                                                {d.triggered_by?.name ?? '—'}
-                                            </td>
-                                            <td className="text-muted-foreground py-2 pr-4 text-xs whitespace-nowrap">
-                                                {d.created_at ? new Date(d.created_at).toLocaleString() : '-'}
-                                            </td>
-                                            <td className="text-muted-foreground py-2 text-xs whitespace-nowrap">
-                                                {d.started_at && d.completed_at
-                                                    ? Math.round((new Date(d.completed_at).getTime() - new Date(d.started_at).getTime()) / 1000) + 's'
-                                                    : '-'}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                        <DeploymentTable deployments={app.deployments} githubRepo={app.github_repo} />
                     )}
                 </CardContent>
             </Card>
+        </div>
+    );
+}
+
+function DeploymentTable({ deployments, githubRepo }: { deployments: Deployment[]; githubRepo: string | null }) {
+    const [expandedId, setExpandedId] = useState<number | null>(null);
+
+    return (
+        <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+                <thead>
+                    <tr className="text-muted-foreground border-b text-left text-xs">
+                        <th className="pb-2 pr-4">Status</th>
+                        <th className="pb-2 pr-4">Source</th>
+                        <th className="pb-2 pr-4">Commit</th>
+                        <th className="pb-2 pr-4">Message</th>
+                        <th className="pb-2 pr-4">Author</th>
+                        <th className="pb-2 pr-4">Deployed</th>
+                        <th className="pb-2">Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {deployments.map((d) => {
+                        const shortSha = d.commit_sha?.substring(0, 7);
+                        const url = d.commit_sha ? commitUrl(githubRepo, d.commit_sha) : null;
+                        const hasBuildOutput = !!d.build_output;
+                        const isExpanded = expandedId === d.id;
+
+                        return (
+                            <React.Fragment key={d.id}>
+                                <tr
+                                    className={`border-b last:border-0 ${hasBuildOutput ? 'cursor-pointer hover:bg-muted/50' : ''}`}
+                                    onClick={() => hasBuildOutput && setExpandedId(isExpanded ? null : d.id)}
+                                >
+                                    <td className="py-2 pr-4">
+                                        <div className="flex items-center gap-1">
+                                            {hasBuildOutput && (
+                                                isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
+                                            )}
+                                            <Badge variant={d.status === 'succeeded' ? 'default' : d.status === 'failed' ? 'destructive' : 'secondary'}>
+                                                {d.status}
+                                            </Badge>
+                                        </div>
+                                    </td>
+                                    <td className="py-2 pr-4">
+                                        <Badge variant="outline" className="font-mono text-xs">
+                                            {d.source ?? 'api'}
+                                        </Badge>
+                                    </td>
+                                    <td className="py-2 pr-4 font-mono text-xs">
+                                        {shortSha ? (
+                                            url ? (
+                                                <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline" onClick={(e) => e.stopPropagation()}>
+                                                    {shortSha}
+                                                </a>
+                                            ) : (
+                                                shortSha
+                                            )
+                                        ) : (
+                                            '-'
+                                        )}
+                                    </td>
+                                    <td className="max-w-48 truncate py-2 pr-4 text-xs">{d.commit_message || '-'}</td>
+                                    <td className="text-muted-foreground py-2 pr-4 text-xs whitespace-nowrap">
+                                        {d.commit_author || d.triggered_by?.name || '\u2014'}
+                                    </td>
+                                    <td className="text-muted-foreground py-2 pr-4 text-xs whitespace-nowrap">
+                                        {d.created_at ? new Date(d.created_at).toLocaleString() : '-'}
+                                    </td>
+                                    <td className="text-muted-foreground py-2 text-xs whitespace-nowrap">
+                                        {d.started_at && d.completed_at
+                                            ? Math.round((new Date(d.completed_at).getTime() - new Date(d.started_at).getTime()) / 1000) + 's'
+                                            : '-'}
+                                    </td>
+                                </tr>
+                                {isExpanded && d.build_output && (
+                                    <tr>
+                                        <td colSpan={7} className="px-2 pb-3 pt-1">
+                                            {d.status === 'failed' && d.log && (
+                                                <div className="mb-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2">
+                                                    <p className="text-sm font-medium text-red-600 dark:text-red-400">{d.log}</p>
+                                                </div>
+                                            )}
+                                            <div className="rounded border bg-muted/50 p-3">
+                                                <p className="text-muted-foreground mb-1 text-xs font-medium">Build Output</p>
+                                                <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs">{d.build_output}</pre>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                </tbody>
+            </table>
         </div>
     );
 }
@@ -1792,6 +2108,114 @@ function getCookie(name: string): string {
     return '';
 }
 
+function GetStartedCard({ app }: { app: App }) {
+    const [dismissed, setDismissed] = useState(() => {
+        try {
+            return localStorage.getItem(`phpless-onboarding-dismissed-${app.id}`) === '1';
+        } catch {
+            return false;
+        }
+    });
+
+    if (dismissed) return null;
+
+    const handleDismiss = () => {
+        setDismissed(true);
+        try {
+            localStorage.setItem(`phpless-onboarding-dismissed-${app.id}`, '1');
+        } catch { /* ignore */ }
+    };
+
+    return (
+        <Card className="border-primary/30 bg-primary/5 relative mb-4">
+            <button
+                onClick={handleDismiss}
+                className="text-muted-foreground hover:text-foreground absolute right-3 top-3"
+                aria-label="Dismiss"
+            >
+                <X className="h-4 w-4" />
+            </button>
+            <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                    <Rocket className="h-4 w-4" />
+                    Get Started
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <div className="grid gap-4 md:grid-cols-3">
+                    <div>
+                        <p className="text-sm font-medium">Deploy via CLI</p>
+                        <code className="bg-muted mt-1 block rounded px-3 py-2 text-xs">phpless init && phpless deploy</code>
+                    </div>
+                    <div>
+                        <p className="text-sm font-medium">Deploy via upload</p>
+                        <p className="text-muted-foreground mt-1 text-sm">
+                            Upload a zip in the{' '}
+                            <button onClick={() => document.querySelector<HTMLButtonElement>('[data-value="deployments"]')?.click()} className="text-primary underline underline-offset-2">
+                                Deployments
+                            </button>{' '}
+                            tab.
+                        </p>
+                    </div>
+                    <div>
+                        <p className="text-sm font-medium">Connect GitHub</p>
+                        <p className="text-muted-foreground mt-1 text-sm">Coming soon — push to deploy.</p>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
+function FirstDeployBanner({ app }: { app: App }) {
+    const [dismissed, setDismissed] = useState(() => {
+        try {
+            return localStorage.getItem(`phpless-first-deploy-seen-${app.id}`) === '1';
+        } catch {
+            return false;
+        }
+    });
+
+    const hasSuccessfulDeploy = app.deployments?.some((d) => d.status === 'completed' || d.status === 'success');
+    const isFirstDeploy = hasSuccessfulDeploy && (app.deployments?.filter((d) => d.status === 'completed' || d.status === 'success').length ?? 0) <= 1;
+
+    if (dismissed || !isFirstDeploy) return null;
+
+    const handleDismiss = () => {
+        setDismissed(true);
+        try {
+            localStorage.setItem(`phpless-first-deploy-seen-${app.id}`, '1');
+        } catch { /* ignore */ }
+    };
+
+    const appUrl = `https://${app.slug}.phpless.digitalno.de`;
+
+    return (
+        <Card className="border-green-500/30 bg-green-500/5 relative mb-4">
+            <button
+                onClick={handleDismiss}
+                className="text-muted-foreground hover:text-foreground absolute right-3 top-3"
+                aria-label="Dismiss"
+            >
+                <X className="h-4 w-4" />
+            </button>
+            <CardContent className="flex items-center gap-4 py-4">
+                <CheckCircle className="h-6 w-6 shrink-0 text-green-500" />
+                <div className="flex-1">
+                    <p className="font-medium">Your app is live!</p>
+                    <p className="text-muted-foreground text-sm">Visit it at {appUrl}</p>
+                </div>
+                <Button asChild size="sm" variant="outline">
+                    <a href={appUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        Visit app
+                    </a>
+                </Button>
+            </CardContent>
+        </Card>
+    );
+}
+
 export default function AppsShow({ app, serverIp }: { app: App; serverIp: string }) {
     const breadcrumbs: BreadcrumbItem[] = [
         { title: 'Dashboard', href: '/dashboard' },
@@ -1921,6 +2345,9 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                                 </button>
                             )}
                             <Badge variant={stateVariant(app.vm_state)}>{app.vm_state}</Badge>
+                            {app.detected_framework && app.detected_framework !== 'vanilla' && (
+                                <Badge variant="outline" className="text-xs capitalize">{app.detected_framework}</Badge>
+                            )}
                         </div>
 
                         {editingSlug ? (
@@ -1963,26 +2390,6 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                             <RefreshCw className={`mr-2 h-4 w-4 ${redeploying ? 'animate-spin' : ''}`} />
                             {redeploying ? 'Deploying…' : 'Redeploy'}
                         </Button>
-                        <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                                <Button variant="destructive">
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Delete
-                                </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                    <AlertDialogTitle>Delete {app.name}?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        This will permanently destroy the VM and all associated data. This action cannot be undone.
-                                    </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                        </AlertDialog>
                     </div>
                 </div>
 
@@ -1991,7 +2398,7 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                         <TabsTrigger value="overview">Overview</TabsTrigger>
                         <TabsTrigger value="analytics">Analytics</TabsTrigger>
                         <TabsTrigger value="logs">Logs</TabsTrigger>
-                        <TabsTrigger value="deployments">Deployments</TabsTrigger>
+                        <TabsTrigger value="deployments" data-value="deployments">Deployments</TabsTrigger>
                         <TabsTrigger value="files">Files</TabsTrigger>
                         <TabsTrigger value="domains">Domains</TabsTrigger>
                         <TabsTrigger value="environment">Environment</TabsTrigger>
@@ -2004,6 +2411,8 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                     </TabsList>
 
                     <TabsContent value="overview" className="mt-4">
+                        <FirstDeployBanner app={app} />
+                        {(!app.deployments || app.deployments.length === 0) && <GetStartedCard app={app} />}
                         <Card>
                             <CardHeader>
                                 <CardTitle>VM Information</CardTitle>
@@ -2064,6 +2473,148 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                 </Tabs>
             </div>
         </AppLayout>
+    );
+}
+
+function DangerZoneCard({ app }: { app: App }) {
+    const handleDelete = () => {
+        router.delete(`/apps/${app.id}`);
+    };
+
+    return (
+        <Card className="border-destructive/30">
+            <CardHeader>
+                <CardTitle className="text-destructive flex items-center gap-2">
+                    <Trash2 className="h-4 w-4" />
+                    Danger Zone
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <div className="flex items-start justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                    <div className="flex-1">
+                        <h4 className="text-sm font-medium">Delete this app</h4>
+                        <p className="text-muted-foreground mt-1 text-sm">
+                            Permanently destroy the VM, deployed code, environment variables, and all associated data. This action cannot be undone.
+                        </p>
+                    </div>
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button variant="destructive" size="sm">
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete app
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>Delete {app.name}?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    This will permanently destroy the VM and all associated data including env vars, deployed code, and persistent files. This action cannot be undone.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                    Delete permanently
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
+function IpAllowlistCard({ app }: { app: App }) {
+    const [ips, setIps] = useState<string[]>(app.ip_allowlist ?? []);
+    const [saving, setSaving] = useState(false);
+    const [dirty, setDirty] = useState(false);
+    const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    const addIp = () => { setIps([...ips, '']); setDirty(true); };
+    const removeIp = (i: number) => { setIps(ips.filter((_, idx) => idx !== i)); setDirty(true); };
+    const updateIp = (i: number, value: string) => {
+        const updated = [...ips];
+        updated[i] = value;
+        setIps(updated);
+        setDirty(true);
+    };
+
+    const save = async () => {
+        setSaving(true);
+        setMsg(null);
+        try {
+            const res = await fetch(`/apps/${app.id}/ip-allowlist`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') },
+                body: JSON.stringify({ ip_allowlist: ips.filter((ip) => ip.trim() !== '') }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setMsg({ text: data.message, type: 'success' });
+                setDirty(false);
+            } else {
+                setMsg({ text: data.message || 'Failed to save.', type: 'error' });
+            }
+        } catch {
+            setMsg({ text: 'Failed to save.', type: 'error' });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    IP Allowlist
+                </CardTitle>
+                <Button variant="outline" size="sm" onClick={addIp}>
+                    <Plus className="mr-1 h-3 w-3" />
+                    Add IP
+                </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {msg && (
+                    <div className={`rounded-lg border p-3 ${msg.type === 'success' ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+                        <p className="text-sm">{msg.text}</p>
+                    </div>
+                )}
+
+                {ips.length === 0 ? (
+                    <p className="text-muted-foreground text-sm">
+                        No IP restrictions. All traffic is allowed. Add IPs to restrict access.
+                    </p>
+                ) : (
+                    <div className="space-y-2">
+                        {ips.map((ip, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                                <Input
+                                    value={ip}
+                                    onChange={(e) => updateIp(i, e.target.value)}
+                                    placeholder="192.168.1.0/24 or 1.2.3.4"
+                                    className="max-w-xs font-mono text-sm"
+                                />
+                                <Button variant="ghost" size="icon" onClick={() => removeIp(i)}>
+                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <p className="text-muted-foreground text-xs">
+                    Restrict access to specific IP addresses or CIDR ranges. Applies to both HTTP traffic and port-forwarded connections. Leave empty to allow all traffic.
+                </p>
+
+                {dirty && (
+                    <Button onClick={save} disabled={saving} size="sm">
+                        {saving ? 'Saving...' : 'Save IP Allowlist'}
+                    </Button>
+                )}
+            </CardContent>
+        </Card>
     );
 }
 

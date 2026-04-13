@@ -108,6 +108,9 @@ func main() {
 		log.WithError(err).Fatal("Failed to initialize VM manager")
 	}
 
+	// Configure allowed WebSocket origins from the panel URL
+	terminal.SetAllowedOrigins([]string{*panelURL})
+
 	// Start WebSocket terminal server on TCP
 	tr := chi.NewRouter()
 	tr.Get("/terminal/{sessionID}", terminal.HandleTerminal(termStore, sshSigner))
@@ -158,7 +161,7 @@ func main() {
 	defer listener.Close()
 
 	// Make socket accessible (www-data needs access for Laravel panel)
-	os.Chmod(*socketPath, 0666)
+	os.Chmod(*socketPath, 0660)
 
 	log.WithField("socket", *socketPath).Info("API server listening")
 

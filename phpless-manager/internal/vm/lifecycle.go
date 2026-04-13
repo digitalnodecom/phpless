@@ -186,7 +186,6 @@ func (m *Manager) Create(cfg VMConfig) (*VM, error) {
 		cmd := firecracker.VMCommandBuilder{}.
 			WithBin("firecracker").
 			WithSocketPath(socketPath).
-			AddArgs("--no-seccomp").
 			WithStdout(writer).
 			WithStderr(writer).
 			Build(ctx)
@@ -393,8 +392,10 @@ func (m *Manager) StopAll() {
 
 // Redeploy stops a VM, applies a deploy function to its rootfs, and restarts it.
 // The deploy function receives the rootfs path and should modify files on disk.
+// If deployFn is nil, the rootfs is left unchanged (resize-only).
+// If cfgOverride is non-nil, it is called to mutate the config before restart (e.g. resize).
 // The VM keeps its ID and slug; IP/MAC are re-allocated.
-func (m *Manager) Redeploy(id string, deployFn func(rootfsPath string) error) (*VM, error) {
+func (m *Manager) Redeploy(id string, deployFn func(rootfsPath string) error, cfgOverride func(*VMConfig)) (*VM, error) {
 	m.mu.RLock()
 	oldVM, exists := m.vms[id]
 	if !exists {
@@ -403,6 +404,10 @@ func (m *Manager) Redeploy(id string, deployFn func(rootfsPath string) error) (*
 	}
 	cfg := oldVM.Config
 	m.mu.RUnlock()
+
+	if cfgOverride != nil {
+		cfgOverride(&cfg)
+	}
 
 	logger := log.WithFields(log.Fields{
 		"vm_id": cfg.ID,
@@ -424,8 +429,10 @@ func (m *Manager) Redeploy(id string, deployFn func(rootfsPath string) error) (*
 
 	// Run the deploy function on the rootfs (safe: VM is stopped)
 	rootfsPath := cfg.RootfsPath(m.config.TenantDir)
-	if err := deployFn(rootfsPath); err != nil {
-		return nil, fmt.Errorf("deploy to rootfs: %w", err)
+	if deployFn != nil {
+		if err := deployFn(rootfsPath); err != nil {
+			return nil, fmt.Errorf("deploy to rootfs: %w", err)
+		}
 	}
 
 	// Clear network fields so Create() re-allocates them

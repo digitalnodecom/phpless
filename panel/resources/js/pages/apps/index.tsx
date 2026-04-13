@@ -99,9 +99,14 @@ export default function AppsIndex({ apps }: { apps: App[] }) {
                                 {apps.map((app) => (
                                     <TableRow key={app.id}>
                                         <TableCell>
-                                            <Link href={`/apps/${app.id}`} className="font-medium hover:underline">
-                                                {app.name}
-                                            </Link>
+                                            <div className="flex items-center gap-2">
+                                                <Link href={`/apps/${app.id}`} className="font-medium hover:underline">
+                                                    {app.name}
+                                                </Link>
+                                                {app.detected_framework && app.detected_framework !== 'vanilla' && (
+                                                    <Badge variant="outline" className="text-xs capitalize">{app.detected_framework}</Badge>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="text-muted-foreground font-mono text-sm">{app.slug}</TableCell>
                                         <TableCell>

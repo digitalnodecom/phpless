@@ -12,9 +12,28 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// AllowedOrigins controls which origins may connect to the WebSocket terminal.
+// Set via SetAllowedOrigins; if empty, all origins are allowed (backwards compat).
+var allowedOrigins []string
+
+// SetAllowedOrigins configures the list of allowed WebSocket origins.
+func SetAllowedOrigins(origins []string) {
+	allowedOrigins = origins
+}
+
 var upgrader = websocket.Upgrader{
-	// Allow all origins — the manager TCP port is only reachable via Caddy reverse-proxy
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		if len(allowedOrigins) == 0 {
+			return true
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range allowedOrigins {
+			if origin == allowed {
+				return true
+			}
+		}
+		return false
+	},
 }
 
 type resizeMsg struct {
@@ -123,6 +142,9 @@ func HandleTerminal(store *Store, signer ssh.Signer) http.HandlerFunc {
 			conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mShell start failed: "+err.Error()+"\x1b[0m\r\n")) //nolint:errcheck
 			return
 		}
+
+		// Change to /app directory after shell starts
+		stdin.Write([]byte("cd /app && clear\n")) //nolint:errcheck
 
 		logger.Info("Terminal session started")
 		done := make(chan struct{}, 2)

@@ -8,6 +8,7 @@ use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
 use App\Services\CaddyfileGenerator;
 use App\Services\EnvironmentVariableService;
+use App\Services\FrameworkDetector;
 use App\Services\VMManagerClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -47,6 +48,10 @@ class AppController extends Controller
             'slug' => ['nullable', 'string', 'max:255', 'alpha_dash', Rule::unique('apps', 'slug')],
             'vcpus' => ['sometimes', 'integer', 'in:1,2'],
             'mem_mib' => ['sometimes', 'integer', 'in:256,512,1024'],
+            'github_repo' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'github_branch' => ['sometimes', 'string', 'max:255'],
+            'build_command' => ['sometimes', 'nullable', 'string', 'max:1000'],
+            'cron_enabled' => ['sometimes', 'boolean'],
         ]);
 
         if (empty($validated['slug'])) {
@@ -76,10 +81,10 @@ class AppController extends Controller
         if ($app->vm_id) {
             try {
                 $vm = $vmManager->getVM($app->vm_id);
-                $app->update([
+                $app->forceFill([
                     'vm_state' => $vm['state'] ?? $app->vm_state,
                     'vm_ip' => $vm['ip'] ?? $app->vm_ip,
-                ]);
+                ])->save();
                 $app->refresh();
             } catch (\Throwable) {
                 // VM manager unreachable, use cached state
@@ -110,12 +115,12 @@ class AppController extends Controller
     /**
      * Deploy app
      *
-     * Deploy code to the app's VM. Upload a .tar.gz tarball (max 50MB) containing your PHP application.
+     * Deploy code to the app's VM. Upload a .tar.gz tarball (max 1GB) containing your PHP application.
      * The tarball is extracted, environment variables are merged, and the code is synced to the VM.
      */
     public function deploy(Request $request, App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         if (! $app->vm_id) {
             return response()->json(['message' => 'App has no VM assigned.'], 422);
@@ -126,7 +131,7 @@ class AppController extends Controller
         // Handle tarball upload
         if ($request->hasFile('tarball')) {
             $request->validate([
-                'tarball' => ['required', 'file', 'max:51200'], // 50MB max
+                'tarball' => ['required', 'file', 'max:1048576'], // 1GB max
             ]);
 
             // Clear existing build dir so deleted files don't persist
@@ -152,29 +157,73 @@ class AppController extends Controller
             return response()->json(['message' => 'No code to deploy. Upload a tarball or save code first.'], 422);
         }
 
+        // Run framework detection
+        $detected = FrameworkDetector::detect($buildDir);
+        $app->update(['detected_framework' => $detected['framework']]);
+
+        // Apply detected defaults if not explicitly set
+        if ((! $app->web_root || $app->web_root === '/') && $detected['web_root'] !== '/') {
+            $app->update(['web_root' => $detected['web_root']]);
+        }
+        if (! $app->build_command && $detected['build_command']) {
+            $app->update(['build_command' => $detected['build_command']]);
+        }
+
         try {
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {
                 $vm = $vmManager->waitForRunning($newVmId, 15);
-                $app->update([
+                $app->forceFill([
                     'vm_id' => $newVmId,
                     'vm_state' => $vm['state'] ?? 'running',
                     'vm_ip' => $vm['ip'] ?? $app->vm_ip,
-                ]);
+                ])->save();
             } catch (\Throwable) {
-                $app->update(['vm_id' => $newVmId]);
+                $app->forceFill(['vm_id' => $newVmId])->save();
             }
             $app->refresh();
+
+            // Run build command inside the VM if configured
+            $buildOutput = null;
+            $buildFailed = false;
+
+            if ($app->build_command && $app->vm_ip) {
+                try {
+                    $buildResult = $vmManager->execBuildCommand($app->vm_ip, $app->build_command, 120);
+                    $buildOutput = $buildResult['output'];
+                    if ($buildResult['exit_code'] !== 0) {
+                        $buildFailed = true;
+                    }
+                } catch (\Throwable $e) {
+                    $buildOutput = $e->getMessage();
+                    $buildFailed = true;
+                }
+            }
+
+            if ($buildFailed) {
+                $app->deployments()->create([
+                    'triggered_by' => $request->user()->id,
+                    'status' => 'failed',
+                    'commit_message' => 'API deploy',
+                    'source' => $request->input('source', 'api'),
+                    'build_output' => $buildOutput,
+                    'log' => 'Build command failed.',
+                    'started_at' => now(),
+                    'completed_at' => now(),
+                ]);
+
+                return response()->json(['message' => 'Build command failed.', 'build_output' => $buildOutput], 422);
+            }
 
             $caddy->regenerateAndReload();
 
             if (! empty($app->port_mappings) && $app->vm_ip) {
-                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings); } catch (\Throwable) {}
+                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings, $app->ip_allowlist ?? []); } catch (\Throwable) {}
             }
 
             $app->deployments()->create([
@@ -182,6 +231,7 @@ class AppController extends Controller
                 'status' => 'succeeded',
                 'commit_message' => 'API deploy',
                 'source' => $request->input('source', 'api'),
+                'build_output' => $buildOutput,
                 'started_at' => now(),
                 'completed_at' => now(),
             ]);
@@ -278,49 +328,57 @@ class AppController extends Controller
      *
      * Browse the app's deployed file tree. Use the `path` query parameter to navigate subdirectories.
      */
-    public function files(Request $request, App $app): JsonResponse
+    public function files(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
     {
         Gate::authorize('view', $app);
 
-        $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
         $subPath = ltrim(str_replace('..', '', $request->query('path', '')), '/');
-        $fullPath = $subPath ? $baseDir . '/' . $subPath : $baseDir;
-
-        if (! File::exists($baseDir)) {
-            return response()->json(['items' => []]);
-        }
-
-        if (! File::exists($fullPath) || ! is_dir($fullPath)) {
-            return response()->json(['items' => []]);
-        }
-
         $persistentPaths = $app->persistent_paths ?? [];
         $items = [];
+        $source = 'build';
 
-        foreach (File::directories($fullPath) as $dir) {
-            $name = basename($dir);
-            $relPath = $subPath ? $subPath . '/' . $name : $name;
-            $items[] = [
-                'name' => $name,
-                'path' => $relPath,
-                'type' => 'dir',
-                'size' => 0,
-                'modified_at' => date('Y-m-d H:i:s', filemtime($dir)),
-                'is_persistent' => in_array($relPath, $persistentPaths, true),
-            ];
+        // If VM is running, read from live filesystem
+        if ($app->vm_ip && $app->vm_state === 'running') {
+            try {
+                $vmPath = $subPath ? "/app/{$subPath}" : '/app';
+                $output = $vmManager->execInVM($app->vm_ip, 'php /usr/local/lib/phpless-ls.php ' . escapeshellarg($vmPath));
+                $vmItems = json_decode($output, true) ?? [];
+                $source = 'vm';
+
+                foreach ($vmItems as $item) {
+                    $relPath = $subPath ? $subPath . '/' . $item['name'] : $item['name'];
+                    $items[] = [
+                        'name' => $item['name'],
+                        'path' => $relPath,
+                        'type' => $item['type'],
+                        'size' => $item['size'],
+                        'modified_at' => date('Y-m-d H:i:s', $item['mtime']),
+                        'is_persistent' => in_array($relPath, $persistentPaths, true),
+                    ];
+                }
+            } catch (\Throwable) {
+                $items = [];
+                // Fall through to build dir
+            }
         }
 
-        foreach (File::files($fullPath) as $file) {
-            $name = $file->getFilename();
-            $relPath = $subPath ? $subPath . '/' . $name : $name;
-            $items[] = [
-                'name' => $name,
-                'path' => $relPath,
-                'type' => 'file',
-                'size' => $file->getSize(),
-                'modified_at' => date('Y-m-d H:i:s', $file->getMTime()),
-                'is_persistent' => in_array($relPath, $persistentPaths, true),
-            ];
+        // Fallback: read from build directory
+        if (empty($items) && $source !== 'vm') {
+            $baseDir = config('phpless.builds_dir') . '/' . $app->slug;
+            $fullPath = $subPath ? $baseDir . '/' . $subPath : $baseDir;
+
+            if (File::exists($fullPath) && is_dir($fullPath)) {
+                foreach (File::directories($fullPath) as $dir) {
+                    $name = basename($dir);
+                    $relPath = $subPath ? $subPath . '/' . $name : $name;
+                    $items[] = ['name' => $name, 'path' => $relPath, 'type' => 'dir', 'size' => 0, 'modified_at' => date('Y-m-d H:i:s', filemtime($dir)), 'is_persistent' => in_array($relPath, $persistentPaths, true)];
+                }
+                foreach (File::files($fullPath) as $file) {
+                    $name = $file->getFilename();
+                    $relPath = $subPath ? $subPath . '/' . $name : $name;
+                    $items[] = ['name' => $name, 'path' => $relPath, 'type' => 'file', 'size' => $file->getSize(), 'modified_at' => date('Y-m-d H:i:s', $file->getMTime()), 'is_persistent' => in_array($relPath, $persistentPaths, true)];
+                }
+            }
         }
 
         usort($items, fn ($a, $b) => $a['type'] === $b['type']
@@ -340,7 +398,7 @@ class AppController extends Controller
         Gate::authorize('view', $app);
 
         $request->validate([
-            'file' => ['required', 'file', 'max:51200'],
+            'file' => ['required', 'file', 'max:1048576'],
             'path' => ['nullable', 'string', 'max:500'],
         ]);
 
@@ -352,6 +410,13 @@ class AppController extends Controller
         $destination  = $baseDir . '/' . $relativePath;
 
         File::ensureDirectoryExists(dirname($destination), 0755);
+
+        $realParent = realpath(dirname($destination));
+        $realBase   = realpath($baseDir);
+        if (! $realParent || ! $realBase || ! str_starts_with($realParent, $realBase)) {
+            return response()->json(['message' => 'Invalid path.'], 422);
+        }
+
         $uploadedFile->move(dirname($destination), basename($destination));
 
         return response()->json(['message' => 'Uploaded.', 'path' => $relativePath]);
@@ -376,6 +441,13 @@ class AppController extends Controller
         $destination  = $baseDir . '/' . $relativePath;
 
         File::ensureDirectoryExists(dirname($destination), 0755);
+
+        $realParent = realpath(dirname($destination));
+        $realBase   = realpath($baseDir) ?: $baseDir;
+        if (! $realParent || ! str_starts_with($realParent, $realBase)) {
+            return response()->json(['message' => 'Invalid path.'], 422);
+        }
+
         File::put($destination, $request->input('content', ''));
 
         return response()->json(['message' => 'Saved.', 'path' => $relativePath]);
@@ -503,6 +575,8 @@ class AppController extends Controller
             'vm_state' => $app->vm_state,
             'vcpus' => $app->vcpus,
             'mem_mib' => $app->mem_mib,
+            'detected_framework' => $app->detected_framework,
+            'build_command' => $app->build_command,
             'created_at' => $app->created_at,
             'updated_at' => $app->updated_at,
         ];
@@ -513,10 +587,16 @@ class AppController extends Controller
             $data['php_version'] = $app->php_version;
             $data['github_repo'] = $app->github_repo;
             $data['github_branch'] = $app->github_branch;
+            $data['cron_enabled'] = $app->cron_enabled;
             $data['deployments'] = $app->deployments?->map(fn ($d) => [
                 'id' => $d->id,
                 'status' => $d->status,
+                'source' => $d->source,
+                'commit_sha' => $d->commit_sha,
                 'commit_message' => $d->commit_message,
+                'commit_author' => $d->commit_author,
+                'branch' => $d->branch,
+                'build_output' => $d->build_output,
                 'created_at' => $d->created_at,
             ]);
             $data['domains'] = $app->domains?->map(fn ($d) => [

@@ -98,6 +98,7 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("slug", mcp.Description("Custom slug (auto-generated from name if omitted)")),
 		mcp.WithNumber("vcpus", mcp.Description("Number of vCPUs (1 or 2, default 1)")),
 		mcp.WithNumber("mem_mib", mcp.Description("Memory in MiB (128, 256, 512, or 1024, default 256)")),
+		mcp.WithBoolean("cron_enabled", mcp.Description("Enable Laravel scheduler (runs php artisan schedule:run every minute)")),
 	), handleCreateApp)
 
 	// delete_app
@@ -229,6 +230,9 @@ func handleCreateApp(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
 	}
 	if m := req.GetInt("mem_mib", 0); m > 0 {
 		createReq.MemMiB = m
+	}
+	if cronEnabled := req.GetBool("cron_enabled", false); cronEnabled {
+		createReq.CronEnabled = &cronEnabled
 	}
 	resp, err := client.CreateApp(createReq)
 	if err != nil {

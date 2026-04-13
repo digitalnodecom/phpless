@@ -47,13 +47,13 @@ class RestoreVms extends Command
                 // Reapply port forwarding rules
                 if (! empty($app->port_mappings) && $app->vm_ip) {
                     try {
-                        $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings);
+                        $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings, $app->ip_allowlist ?? []);
                         $this->info("  [{$app->slug}] port mappings applied");
                     } catch (\Throwable) {}
                 }
             } catch (\Throwable $e) {
                 $failed++;
-                $app->update(['vm_state' => 'error']);
+                $app->forceFill(['vm_state' => 'error'])->save();
                 $this->error("  [{$app->slug}] failed: {$e->getMessage()}");
             }
         }
@@ -92,17 +92,17 @@ class RestoreVms extends Command
         $vm = $vmManager->createVM($app->slug, $app->vcpus, $app->mem_mib, $app->vm_id ?: null);
         $vmId = $vm['id'] ?? $app->slug;
 
-        $app->update([
+        $app->forceFill([
             'vm_id' => $vmId,
             'vm_state' => 'starting',
-        ]);
+        ])->save();
 
         $vm = $vmManager->waitForRunning($vmId);
 
-        $app->update([
+        $app->forceFill([
             'vm_ip' => $vm['ip'] ?? null,
             'vm_state' => 'running',
-        ]);
+        ])->save();
 
         // Redeploy code if a build exists
         // Note: deployCode triggers Redeploy in the Go manager which destroys
@@ -112,15 +112,15 @@ class RestoreVms extends Command
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig);
+            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
             $newVmId = $result['vm_id'] ?? $vmId;
 
             $vm = $vmManager->waitForRunning($newVmId);
-            $app->update([
+            $app->forceFill([
                 'vm_id' => $newVmId,
                 'vm_ip' => $vm['ip'] ?? null,
                 'vm_state' => 'running',
-            ]);
+            ])->save();
             $app->refresh();
 
             $this->line("    deployed code from {$buildDir}");

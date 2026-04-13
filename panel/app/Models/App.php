@@ -12,24 +12,24 @@ class App extends Model
         'team_id',
         'name',
         'slug',
-        'vm_id',
-        'vm_ip',
-        'vm_state',
         'vcpus',
         'mem_mib',
         'php_version',
         'github_repo',
         'github_branch',
-        'github_webhook_secret',
         'build_command',
         'worker_mode',
         'worker_script',
         'worker_count',
         'mercure_enabled',
         'web_root',
+        'detected_framework',
         'persistent_paths',
         'workers',
         'port_mappings',
+        'ip_allowlist',
+        'cron_enabled',
+        'cron_schedule',
     ];
 
     protected function casts(): array
@@ -43,6 +43,9 @@ class App extends Model
             'persistent_paths' => 'array',
             'workers' => 'array',
             'port_mappings' => 'array',
+            'ip_allowlist' => 'array',
+            'cron_enabled' => 'boolean',
+            'cron_schedule' => 'array',
         ];
     }
 

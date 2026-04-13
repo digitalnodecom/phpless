@@ -93,8 +93,14 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) verifyAccess(slug, token string) (string, error) {
 	url := fmt.Sprintf("%s/api/v1/ssh/verify", s.cfg.PanelURL)
 
-	reqBody := fmt.Sprintf(`{"slug":"%s"}`, slug)
-	req, err := http.NewRequest("POST", url, strings.NewReader(reqBody))
+	bodyStruct := struct {
+		Slug string `json:"slug"`
+	}{Slug: slug}
+	bodyBytes, err := json.Marshal(bodyStruct)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return "", err
 	}

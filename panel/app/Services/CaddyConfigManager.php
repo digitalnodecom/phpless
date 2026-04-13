@@ -48,6 +48,9 @@ class CaddyConfigManager
         $lines[] = "\thandle_path /ws/* {";
         $lines[] = "\t\treverse_proxy 127.0.0.1:7474";
         $lines[] = "\t}";
+        $lines[] = "\trequest_body {";
+        $lines[] = "\t\tmax_size 1GB";
+        $lines[] = "\t}";
         $lines[] = "\troot * /var/www/phpless/panel/public";
         $lines[] = "\tphp_fastcgi unix//run/php/php8.4-fpm.sock";
         $lines[] = "\tfile_server";
@@ -57,41 +60,11 @@ class CaddyConfigManager
 
         // Per-app blocks — every app gets a TLS-enabled block
         foreach ($allApps as $app) {
-            $lines[] = "{$app->slug}.{$this->domain} {";
-            if ($app->vm_state === 'running' && $app->vm_ip) {
-                $lines[] = "\treverse_proxy {$app->vm_ip}:8080";
-            } else {
-                $lines[] = "\trespond \"App is {$app->vm_state}\" 503";
-            }
-            $lines[] = "\tlog {";
-            $lines[] = "\t\toutput file {$this->logDir}/{$app->slug}.log {";
-            $lines[] = "\t\t\troll_size 50MiB";
-            $lines[] = "\t\t\troll_keep 3";
-            $lines[] = "\t\t\troll_keep_for 168h";
-            $lines[] = "\t\t}";
-            $lines[] = "\t\tformat json";
-            $lines[] = "\t}";
-            $lines[] = '}';
-            $lines[] = '';
+            $this->appendAppBlock($lines, "{$app->slug}.{$this->domain}", $app);
 
             // Custom domains for this app
             foreach ($app->domains as $domain) {
-                $lines[] = "{$domain->domain} {";
-                if ($app->vm_state === 'running' && $app->vm_ip) {
-                    $lines[] = "\treverse_proxy {$app->vm_ip}:8080";
-                } else {
-                    $lines[] = "\trespond \"App is {$app->vm_state}\" 503";
-                }
-                $lines[] = "\tlog {";
-                $lines[] = "\t\toutput file {$this->logDir}/{$app->slug}.log {";
-                $lines[] = "\t\t\troll_size 50MiB";
-                $lines[] = "\t\t\troll_keep 3";
-                $lines[] = "\t\t\troll_keep_for 168h";
-                $lines[] = "\t\t}";
-                $lines[] = "\t\tformat json";
-                $lines[] = "\t}";
-                $lines[] = '}';
-                $lines[] = '';
+                $this->appendAppBlock($lines, $domain->domain, $app);
             }
         }
 
@@ -114,5 +87,43 @@ class CaddyConfigManager
         $lines[] = '';
 
         return implode("\n", $lines);
+    }
+
+    private function appendAppBlock(array &$lines, string $hostname, App $app): void
+    {
+        $hasAllowlist = ! empty($app->ip_allowlist);
+        $isRunning = $app->vm_state === 'running' && $app->vm_ip;
+
+        $lines[] = "{$hostname} {";
+
+        if ($hasAllowlist) {
+            $ips = implode(' ', $app->ip_allowlist);
+            $lines[] = "\t@allowed remote_ip {$ips}";
+            $lines[] = "\thandle @allowed {";
+            if ($isRunning) {
+                $lines[] = "\t\treverse_proxy {$app->vm_ip}:8080";
+            } else {
+                $lines[] = "\t\trespond \"App is {$app->vm_state}\" 503";
+            }
+            $lines[] = "\t}";
+            $lines[] = "\trespond \"Forbidden\" 403";
+        } else {
+            if ($isRunning) {
+                $lines[] = "\treverse_proxy {$app->vm_ip}:8080";
+            } else {
+                $lines[] = "\trespond \"App is {$app->vm_state}\" 503";
+            }
+        }
+
+        $lines[] = "\tlog {";
+        $lines[] = "\t\toutput file {$this->logDir}/{$app->slug}.log {";
+        $lines[] = "\t\t\troll_size 50MiB";
+        $lines[] = "\t\t\troll_keep 3";
+        $lines[] = "\t\t\troll_keep_for 168h";
+        $lines[] = "\t\t}";
+        $lines[] = "\t\tformat json";
+        $lines[] = "\t}";
+        $lines[] = '}';
+        $lines[] = '';
     }
 }

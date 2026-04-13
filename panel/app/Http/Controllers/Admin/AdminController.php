@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\App;
 use App\Models\RequestMetric;
 use App\Models\Team;
+use App\Models\User;
+use App\Services\VMManagerClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -12,9 +15,42 @@ use Inertia\Response;
 
 class AdminController extends Controller
 {
-    public function index(): Response
+    public function index(VMManagerClient $vmManager): Response
     {
         $periodStart = now()->startOfMonth();
+
+        // Host-wide stats from the manager (RAM, CPU, disk, load)
+        $host = $vmManager->hostStats();
+
+        // VM stats from the manager — aggregate memory/cpu/disk across all VMs
+        $vms = [];
+        try {
+            $vms = $vmManager->listVMs();
+        } catch (\Throwable) {}
+
+        $runningVms = 0;
+        $totalVmMemAllocated = 0;
+        $totalVmMemUsed = 0;
+        $totalVmDiskUsed = 0;
+        $totalVmDiskTotal = 0;
+        $totalVmCpuPct = 0.0;
+
+        foreach ($vms as $vm) {
+            if (($vm['state'] ?? null) === 'running') {
+                $runningVms++;
+                $totalVmCpuPct += $vm['cpu_pct'] ?? 0;
+            }
+            $totalVmMemAllocated += ($vm['mem_mib'] ?? 0) * 1024 * 1024;
+            $totalVmMemUsed += $vm['mem_used'] ?? 0;
+            $totalVmDiskUsed += $vm['disk_used'] ?? 0;
+            $totalVmDiskTotal += $vm['disk_total'] ?? 0;
+        }
+
+        // Global counts
+        $totalApps = App::count();
+        $totalUsers = User::count();
+        $totalTeams = Team::count();
+        $totalRequestsThisMonth = (int) RequestMetric::where('period', '>=', $periodStart)->sum('requests');
 
         // Get request counts per team for this month.
         $usageByTeam = RequestMetric::query()
@@ -44,6 +80,22 @@ class AdminController extends Controller
 
         return Inertia::render('admin/index', [
             'teams' => $teams,
+            'stats' => [
+                'host' => $host,
+                'vms' => [
+                    'total' => count($vms),
+                    'running' => $runningVms,
+                    'mem_allocated' => $totalVmMemAllocated,
+                    'mem_used' => $totalVmMemUsed,
+                    'disk_used' => $totalVmDiskUsed,
+                    'disk_total' => $totalVmDiskTotal,
+                    'cpu_pct_sum' => round($totalVmCpuPct, 1),
+                ],
+                'total_apps' => $totalApps,
+                'total_users' => $totalUsers,
+                'total_teams' => $totalTeams,
+                'total_requests_this_month' => $totalRequestsThisMonth,
+            ],
         ]);
     }
 

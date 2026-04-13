@@ -52,11 +52,11 @@ func TestPhplessIgnore(t *testing.T) {
 	}
 	sort.Strings(files)
 
-	expected := []string{"index.php", "src", "src/app.php"}
+	expected := []string{"index.php", "src", "src/app.php", "vendor", "vendor/bar.php"}
 	sort.Strings(expected)
 
-	if count != 2 { // index.php + src/app.php (dirs don't count in fileCount)
-		t.Errorf("expected 2 files, got %d", count)
+	if count != 3 { // index.php + src/app.php + vendor/bar.php (dirs don't count in fileCount)
+		t.Errorf("expected 3 files, got %d", count)
 	}
 
 	if len(files) != len(expected) {

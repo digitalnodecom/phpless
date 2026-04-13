@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 	"github.com/phpless/cli/internal/archive"
@@ -10,6 +12,54 @@ import (
 	"github.com/phpless/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
+
+// frameworkInfo holds detection results for a PHP framework.
+type frameworkInfo struct {
+	Name    string
+	WebRoot string
+}
+
+// detectFramework scans the given directory for known PHP framework indicators.
+func detectFramework(dir string) frameworkInfo {
+	// Check for Laravel (artisan file)
+	if _, err := os.Stat(filepath.Join(dir, "artisan")); err == nil {
+		return frameworkInfo{Name: "Laravel", WebRoot: "public"}
+	}
+
+	// Parse composer.json
+	data, err := os.ReadFile(filepath.Join(dir, "composer.json"))
+	if err != nil {
+		return frameworkInfo{Name: "Vanilla PHP", WebRoot: "/"}
+	}
+
+	var composer struct {
+		Require map[string]string `json:"require"`
+	}
+	if err := json.Unmarshal(data, &composer); err != nil {
+		return frameworkInfo{Name: "Vanilla PHP", WebRoot: "/"}
+	}
+
+	if _, ok := composer.Require["laravel/framework"]; ok {
+		return frameworkInfo{Name: "Laravel", WebRoot: "public"}
+	}
+	if _, ok := composer.Require["symfony/framework-bundle"]; ok {
+		return frameworkInfo{Name: "Symfony", WebRoot: "public"}
+	}
+	if _, ok := composer.Require["cakephp/cakephp"]; ok {
+		return frameworkInfo{Name: "CakePHP", WebRoot: "webroot"}
+	}
+	if _, ok := composer.Require["codeigniter4/framework"]; ok {
+		return frameworkInfo{Name: "CodeIgniter 4", WebRoot: "public"}
+	}
+	if _, ok := composer.Require["slim/slim"]; ok {
+		return frameworkInfo{Name: "Slim", WebRoot: "public"}
+	}
+	if _, ok := composer.Require["yiisoft/yii2"]; ok {
+		return frameworkInfo{Name: "Yii2", WebRoot: "web"}
+	}
+
+	return frameworkInfo{Name: "Vanilla PHP", WebRoot: "/"}
+}
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
@@ -55,6 +105,13 @@ func newInitCmd() *cobra.Command {
 				} else {
 					ui.Success("Created %s", ignoreFile)
 				}
+			}
+
+			// Detect framework
+			fw := detectFramework(".")
+			ui.Success("Detected framework: %s", fw.Name)
+			if fw.WebRoot != "/" {
+				fmt.Printf("  Suggested web_root: %s\n", fw.WebRoot)
 			}
 
 			return nil

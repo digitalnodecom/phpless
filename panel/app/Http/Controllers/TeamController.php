@@ -112,6 +112,36 @@ class TeamController extends Controller
         return redirect()->route('dashboard')->with('success', 'You have left the team.');
     }
 
+    public function store(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+        ]);
+
+        // Generate a unique slug
+        $baseSlug = \Illuminate\Support\Str::slug($validated['name']);
+        $slug = $baseSlug;
+        $counter = 1;
+        while (Team::where('slug', $slug)->exists()) {
+            $slug = "{$baseSlug}-{$counter}";
+            $counter++;
+        }
+
+        $team = Team::create([
+            'name' => $validated['name'],
+            'slug' => $slug,
+            'owner_id' => $user->id,
+            'plan' => 'hobby',
+        ]);
+
+        $team->users()->attach($user->id, ['role' => 'owner']);
+        $user->update(['current_team_id' => $team->id]);
+
+        return redirect()->route('dashboard')->with('success', "Team '{$team->name}' created.");
+    }
+
     public function switchTeam(Request $request, Team $team): RedirectResponse
     {
         $user = $request->user();

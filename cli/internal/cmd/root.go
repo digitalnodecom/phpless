@@ -43,6 +43,8 @@ func NewRootCmd(version string) *cobra.Command {
 	rootCmd.AddCommand(newInfoCmd())
 	rootCmd.AddCommand(newSSHCmd())
 	rootCmd.AddCommand(newInitCmd())
+	rootCmd.AddCommand(newUpCmd())
+	rootCmd.AddCommand(newOpenCmd())
 	rootCmd.AddCommand(newMCPCmd(version))
 
 	rootCmd.Version = version

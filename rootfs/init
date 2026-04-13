@@ -105,6 +105,16 @@ if [ -f /etc/phpless-workers.json ]; then
     echo "[phpless-init] Worker manager started"
 fi
 
+# Start crond if a crontab was written by the deploy process
+if [ -f /var/spool/cron/crontabs/root ]; then
+    crond -b || true
+    echo "[phpless-init] crond started (scheduler enabled)"
+fi
+
+# Limit Go runtime memory in microVMs
+export GOMAXPROCS=1
+export GOMEMLIMIT=64MiB
+
 echo "[phpless-init] Starting FrankenPHP on :8080..."
 exec /usr/local/bin/frankenphp run \
     --config /etc/frankenphp/Caddyfile \

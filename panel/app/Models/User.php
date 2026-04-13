@@ -39,7 +39,7 @@ class User extends Authenticatable
 
     public function getIsAdminAttribute(): bool
     {
-        return $this->email === config('phpless.admin_email');
+        return in_array($this->email, config('phpless.admin_emails', []), true);
     }
 
     public function teams(): BelongsToMany

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -29,11 +30,29 @@ type Server struct {
 	termSessions *terminal.Store
 	sshSigner    ssh.Signer
 	portFwd      *network.PortForwarder
+	authSecret   string
 }
 
 // NewServer creates a new API server.
 func NewServer(manager *vm.Manager, termSessions *terminal.Store, sshSigner ssh.Signer, portFwd *network.PortForwarder) *Server {
-	return &Server{manager: manager, termSessions: termSessions, sshSigner: sshSigner, portFwd: portFwd}
+	return &Server{
+		manager:      manager,
+		termSessions: termSessions,
+		sshSigner:    sshSigner,
+		portFwd:      portFwd,
+		authSecret:   os.Getenv("PHPLESS_MANAGER_SECRET"),
+	}
+}
+
+// sharedSecretAuth is middleware that validates the X-Manager-Secret header.
+func (s *Server) sharedSecretAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authSecret != "" && r.Header.Get("X-Manager-Secret") != s.authSecret {
+			httpError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Router returns the chi router with all API routes registered.
@@ -42,6 +61,7 @@ func (s *Server) Router() *chi.Mux {
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(s.sharedSecretAuth)
 
 	// Most routes use a 30s timeout
 	r.Group(func(r chi.Router) {
@@ -58,6 +78,7 @@ func (s *Server) Router() *chi.Mux {
 
 		r.Get("/upstreams/{slug}", s.getUpstream)
 		r.Get("/health", s.health)
+		r.Get("/host-stats", s.hostStats)
 		r.Post("/terminal-sessions", s.createTerminalSession)
 		r.Get("/workers/status", s.proxyWorkerStatus)
 		r.Get("/workers/logs/*", s.proxyWorkerLogs)
@@ -65,8 +86,20 @@ func (s *Server) Router() *chi.Mux {
 		r.Delete("/port-mappings", s.removePortMappings)
 	})
 
+	// Exec has its own timeout (up to 5 min)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(5 * time.Minute))
+		r.Post("/exec", terminal.HandleExec(s.sshSigner))
+	})
+
 	return r
 }
+
+// Hard caps for VM resource allocation.
+const (
+	MaxVCPUs  = 4
+	MaxMemMiB = 2048
+)
 
 // --- Request/Response types ---
 
@@ -101,6 +134,9 @@ type DeployRequest struct {
 	EnvContent       string   `json:"env_content,omitempty"`
 	CaddyfileContent string   `json:"caddyfile_content,omitempty"`
 	WorkersConfig    string   `json:"workers_config,omitempty"` // JSON array of worker definitions
+	CronEnabled      bool     `json:"cron_enabled,omitempty"`   // enable cron (php artisan schedule:run every minute)
+	VCPUs            int      `json:"vcpus,omitempty"`          // resize: new vCPU count
+	MemMiB           int      `json:"mem_mib,omitempty"`        // resize: new memory in MiB
 }
 
 // UpstreamResponse is returned for Caddy routing queries.
@@ -140,6 +176,12 @@ func (s *Server) createVM(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MemMiB > 0 {
 		cfg.MemMiB = req.MemMiB
+	}
+	if cfg.VCPUs > MaxVCPUs {
+		cfg.VCPUs = MaxVCPUs
+	}
+	if cfg.MemMiB > MaxMemMiB {
+		cfg.MemMiB = MaxMemMiB
 	}
 
 	v, err := s.manager.Create(cfg)
@@ -193,7 +235,9 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.AppDir == "" {
+	// app_dir is required unless this is a resize-only request
+	isResizeOnly := req.AppDir == "" && (req.VCPUs > 0 || req.MemMiB > 0)
+	if req.AppDir == "" && !isResizeOnly {
 		httpError(w, http.StatusBadRequest, "app_dir is required")
 		return
 	}
@@ -204,9 +248,30 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce hard caps on resize values
+	if req.VCPUs > MaxVCPUs {
+		req.VCPUs = MaxVCPUs
+	}
+	if req.MemMiB > MaxMemMiB {
+		req.MemMiB = MaxMemMiB
+	}
+
+	// Build config override for resize
+	var cfgOverride func(*vm.VMConfig)
+	if req.VCPUs > 0 || req.MemMiB > 0 {
+		cfgOverride = func(cfg *vm.VMConfig) {
+			if req.VCPUs > 0 {
+				cfg.VCPUs = req.VCPUs
+			}
+			if req.MemMiB > 0 {
+				cfg.MemMiB = req.MemMiB
+			}
+		}
+	}
+
 	if v.Config.Overlay {
 		overlayPath := v.Config.OverlayPath(s.manager.TenantDir())
-		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.PersistentPaths, req.EnvContent, req.CaddyfileContent, req.WorkersConfig); err != nil {
+		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.PersistentPaths, req.EnvContent, req.CaddyfileContent, req.WorkersConfig, req.CronEnabled); err != nil {
 			httpError(w, http.StatusInternalServerError, "deploy failed: %v", err)
 			return
 		}
@@ -218,15 +283,20 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Non-overlay: stop VM, deploy to rootfs, restart
-	appDir := req.AppDir
-	persistentPaths := req.PersistentPaths
-	envContent := req.EnvContent
-	caddyfileContent := req.CaddyfileContent
-	workersConfig := req.WorkersConfig
-	newVM, err := s.manager.Redeploy(id, func(rootfsPath string) error {
-		return deploy.DeployToRootfs(rootfsPath, appDir, persistentPaths, envContent, caddyfileContent, workersConfig)
-	})
+	// Non-overlay: stop VM, optionally deploy to rootfs, restart (with optional resize)
+	var deployFn func(rootfsPath string) error
+	if req.AppDir != "" {
+		appDir := req.AppDir
+		persistentPaths := req.PersistentPaths
+		envContent := req.EnvContent
+		caddyfileContent := req.CaddyfileContent
+		workersConfig := req.WorkersConfig
+		cronEnabled := req.CronEnabled
+		deployFn = func(rootfsPath string) error {
+			return deploy.DeployToRootfs(rootfsPath, appDir, persistentPaths, envContent, caddyfileContent, workersConfig, cronEnabled)
+		}
+	}
+	newVM, err := s.manager.Redeploy(id, deployFn, cfgOverride)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "deploy failed: %v", err)
 		return
@@ -273,6 +343,158 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"total_vms":   len(vms),
 		"running_vms": running,
 	})
+}
+
+// hostStats returns physical host metrics: RAM, CPU, disk, load average.
+func (s *Server) hostStats(w http.ResponseWriter, r *http.Request) {
+	// Memory from /proc/meminfo
+	memTotal, memFree, memAvailable := readMeminfo()
+
+	// Load average from /proc/loadavg
+	load1, load5, load15 := readLoadavg()
+
+	// Disk usage of root filesystem
+	diskTotal, diskFree := readDiskUsage("/")
+
+	// CPU count from /proc/cpuinfo
+	cpuCount := readCPUCount()
+
+	// Overall CPU percent via two stat samples
+	cpuPct := readCPUPercent()
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"mem_total":     memTotal,
+		"mem_free":      memFree,
+		"mem_available": memAvailable,
+		"mem_used":      memTotal - memAvailable,
+		"disk_total":    diskTotal,
+		"disk_free":     diskFree,
+		"disk_used":     diskTotal - diskFree,
+		"cpu_count":     cpuCount,
+		"cpu_pct":       cpuPct,
+		"load_1":        load1,
+		"load_5":        load5,
+		"load_15":       load15,
+	})
+}
+
+// readMeminfo reads /proc/meminfo and returns total, free, available in bytes.
+func readMeminfo() (total, free, available int64) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0, 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		val, _ := strconv.ParseInt(fields[1], 10, 64)
+		val *= 1024 // kB → bytes
+		switch fields[0] {
+		case "MemTotal:":
+			total = val
+		case "MemFree:":
+			free = val
+		case "MemAvailable:":
+			available = val
+		}
+	}
+	return
+}
+
+// readLoadavg reads /proc/loadavg and returns 1, 5, 15 minute averages.
+func readLoadavg() (l1, l5, l15 float64) {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, 0, 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 3 {
+		return 0, 0, 0
+	}
+	l1, _ = strconv.ParseFloat(fields[0], 64)
+	l5, _ = strconv.ParseFloat(fields[1], 64)
+	l15, _ = strconv.ParseFloat(fields[2], 64)
+	return
+}
+
+// readDiskUsage returns total and free bytes for a filesystem at path.
+func readDiskUsage(path string) (total, free int64) {
+	out, err := exec.Command("df", "-B1", "--output=size,avail", path).Output()
+	if err != nil {
+		return 0, 0
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) < 2 {
+		return 0, 0
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 2 {
+		return 0, 0
+	}
+	total, _ = strconv.ParseInt(fields[0], 10, 64)
+	free, _ = strconv.ParseInt(fields[1], 10, 64)
+	return
+}
+
+// readCPUCount returns the number of processors from /proc/cpuinfo.
+func readCPUCount() int {
+	data, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "processor") {
+			count++
+		}
+	}
+	return count
+}
+
+// readCPUPercent samples /proc/stat twice 100ms apart to compute current CPU usage.
+func readCPUPercent() float64 {
+	u1, i1 := readCPUStat()
+	time.Sleep(100 * time.Millisecond)
+	u2, i2 := readCPUStat()
+
+	usedDelta := u2 - u1
+	idleDelta := i2 - i1
+	total := usedDelta + idleDelta
+	if total == 0 {
+		return 0
+	}
+	pct := float64(usedDelta) / float64(total) * 100.0
+	return float64(int(pct*10)) / 10.0
+}
+
+// readCPUStat reads the first line of /proc/stat and returns (used, idle) ticks.
+func readCPUStat() (used, idle int64) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		// cpu user nice system idle iowait irq softirq steal guest guest_nice
+		if len(fields) < 5 {
+			return 0, 0
+		}
+		for i := 1; i < len(fields); i++ {
+			v, _ := strconv.ParseInt(fields[i], 10, 64)
+			if i == 4 { // idle
+				idle = v
+			} else {
+				used += v
+			}
+		}
+		return
+	}
+	return 0, 0
 }
 
 func (s *Server) getVMLogs(w http.ResponseWriter, r *http.Request) {
@@ -326,15 +548,16 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request) {
 // applyPortMappings sets up iptables DNAT rules for a VM.
 func (s *Server) applyPortMappings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		VMIP     string                `json:"vm_ip"`
-		Mappings []network.PortMapping `json:"mappings"`
+		VMIP       string                `json:"vm_ip"`
+		Mappings   []network.PortMapping `json:"mappings"`
+		AllowedIPs []string              `json:"allowed_ips,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VMIP == "" {
 		httpError(w, http.StatusBadRequest, "vm_ip and mappings required")
 		return
 	}
 
-	if err := s.portFwd.Apply(req.VMIP, req.Mappings); err != nil {
+	if err := s.portFwd.Apply(req.VMIP, req.Mappings, req.AllowedIPs); err != nil {
 		httpError(w, http.StatusInternalServerError, "failed to apply port mappings: %v", err)
 		return
 	}
@@ -363,6 +586,10 @@ func (s *Server) proxyWorkerStatus(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "vm_ip is required")
 		return
 	}
+	if !s.isKnownVM(vmIP) {
+		httpError(w, http.StatusForbidden, "unknown vm_ip")
+		return
+	}
 
 	resp, err := http.Get(fmt.Sprintf("http://%s:9111/status", vmIP))
 	if err != nil {
@@ -384,6 +611,10 @@ func (s *Server) proxyWorkerLogs(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "vm_ip is required")
 		return
 	}
+	if !s.isKnownVM(vmIP) {
+		httpError(w, http.StatusForbidden, "unknown vm_ip")
+		return
+	}
 
 	// Forward the rest of the path after /workers/logs/
 	path := strings.TrimPrefix(r.URL.Path, "/workers/logs")
@@ -403,6 +634,16 @@ func (s *Server) proxyWorkerLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Helpers ---
+
+// isKnownVM checks whether the given IP belongs to a managed VM.
+func (s *Server) isKnownVM(ip string) bool {
+	for _, v := range s.manager.List() {
+		if v.Config.IP == ip {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *Server) vmToResponse(v *vm.VM) VMResponse {
 	used, total := ext4DiskUsage(v.Config.RootfsPath(s.manager.TenantDir()))

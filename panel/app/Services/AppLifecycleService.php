@@ -23,23 +23,23 @@ class AppLifecycleService
             'slug' => $slug,
             'vcpus' => $data['vcpus'] ?? 1,
             'mem_mib' => $data['mem_mib'] ?? 256,
-            'vm_state' => 'creating',
         ]);
+        $app->forceFill(['vm_state' => 'creating'])->save();
 
         try {
             $vm = $this->vmManager->createVM($slug, $app->vcpus, $app->mem_mib);
-            $app->update([
+            $app->forceFill([
                 'vm_id' => $vm['id'] ?? $slug,
                 'vm_state' => 'starting',
-            ]);
+            ])->save();
 
             $vm = $this->vmManager->waitForRunning($vm['id'] ?? $slug);
-            $app->update([
+            $app->forceFill([
                 'vm_ip' => $vm['ip'] ?? null,
                 'vm_state' => 'running',
-            ]);
+            ])->save();
         } catch (\Throwable $e) {
-            $app->update(['vm_state' => 'error']);
+            $app->forceFill(['vm_state' => 'error'])->save();
         }
 
         // Always regenerate Caddy so the subdomain gets a TLS cert
@@ -88,12 +88,12 @@ class AppLifecycleService
 
         try {
             $vm = $this->vmManager->getVM($app->vm_id);
-            $app->update([
+            $app->forceFill([
                 'vm_state' => $vm['state'] ?? 'unknown',
                 'vm_ip' => $vm['ip'] ?? $app->vm_ip,
-            ]);
+            ])->save();
         } catch (\Throwable) {
-            $app->update(['vm_state' => 'unreachable']);
+            $app->forceFill(['vm_state' => 'unreachable'])->save();
         }
 
         return $app->fresh();

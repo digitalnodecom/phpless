@@ -276,11 +276,15 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/files/persistent', [AppController::class, 'setPersistent'])->name('apps.files.persistent');
     Route::put('apps/{app}/rename', [AppController::class, 'rename'])->name('apps.rename');
     Route::put('apps/{app}/settings', [AppController::class, 'updateSettings'])->name('apps.settings.update');
+    Route::put('apps/{app}/ip-allowlist', [AppController::class, 'updateIpAllowlist'])->name('apps.ip-allowlist.update');
     Route::put('apps/{app}/port-mappings', [AppController::class, 'updatePortMappings'])->name('apps.port-mappings.update');
     Route::put('apps/{app}/workers', [AppController::class, 'updateWorkers'])->name('apps.workers.update');
     Route::get('apps/{app}/workers/status', [AppController::class, 'workerStatus'])->name('apps.workers.status');
     Route::get('apps/{app}/workers/logs', [AppController::class, 'workerLogs'])->name('apps.workers.logs');
     Route::post('apps/{app}/generate-mercure-keys', [AppController::class, 'generateMercureKeys'])->name('apps.generate-mercure-keys');
+    Route::post('apps/{app}/github/connect', [AppController::class, 'githubConnect'])->name('apps.github.connect');
+    Route::post('apps/{app}/github/disconnect', [AppController::class, 'githubDisconnect'])->name('apps.github.disconnect');
+    Route::post('apps/{app}/github/deploy', [AppController::class, 'githubDeploy'])->name('apps.github.deploy');
     Route::post('apps/{app}/terminal-session', [TerminalController::class, 'store'])->name('apps.terminal-session');
     Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
     Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
@@ -298,6 +302,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::delete('apps/{app}/env/{envVar}', [EnvironmentVariableController::class, 'destroy'])->name('apps.env.destroy');
 
     // Team switching
+    Route::post('teams', [TeamController::class, 'store'])->name('teams.store');
     Route::post('teams/{team}/switch', [TeamController::class, 'switchTeam'])->name('teams.switch');
 
     // Team settings

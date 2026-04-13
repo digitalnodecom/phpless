@@ -23,7 +23,6 @@ var DefaultIgnoreRules = `.git/
 .phpless.toml
 .phplessignore
 node_modules/
-vendor/
 .DS_Store
 __MACOSX/
 *.log

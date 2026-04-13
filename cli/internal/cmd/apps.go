@@ -66,6 +66,7 @@ func newAppsCreateCmd() *cobra.Command {
 	var slug string
 	var vcpus int
 	var memMiB int
+	var cronEnabled bool
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -88,6 +89,9 @@ func newAppsCreateCmd() *cobra.Command {
 			}
 			if memMiB > 0 {
 				req.MemMiB = memMiB
+			}
+			if cmd.Flags().Changed("cron") {
+				req.CronEnabled = &cronEnabled
 			}
 
 			spin := ui.NewSpinner("Creating app...")
@@ -117,6 +121,7 @@ func newAppsCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&slug, "slug", "", "Custom slug for the app")
 	cmd.Flags().IntVar(&vcpus, "vcpus", 0, "Number of vCPUs (1 or 2)")
 	cmd.Flags().IntVar(&memMiB, "mem", 0, "Memory in MiB (128, 256, 512, 1024)")
+	cmd.Flags().BoolVar(&cronEnabled, "cron", false, "Enable Laravel scheduler (cron)")
 
 	return cmd
 }

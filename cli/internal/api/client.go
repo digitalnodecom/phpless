@@ -224,10 +224,11 @@ func (c *Client) GetApp(slug string) (*AppDetailResponse, error) {
 }
 
 type CreateAppRequest struct {
-	Name   string `json:"name"`
-	Slug   string `json:"slug,omitempty"`
-	VCPUs  int    `json:"vcpus,omitempty"`
-	MemMiB int    `json:"mem_mib,omitempty"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug,omitempty"`
+	VCPUs       int    `json:"vcpus,omitempty"`
+	MemMiB      int    `json:"mem_mib,omitempty"`
+	CronEnabled *bool  `json:"cron_enabled,omitempty"`
 }
 
 type CreateAppResponse struct {

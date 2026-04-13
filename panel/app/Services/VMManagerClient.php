@@ -18,7 +18,7 @@ class VMManagerClient
 
     private function request(): PendingRequest
     {
-        return Http::baseUrl('http://localhost')
+        $request = Http::baseUrl('http://localhost')
             ->withOptions([
                 'curl' => [
                     CURLOPT_UNIX_SOCKET_PATH => $this->socketPath,
@@ -26,11 +26,27 @@ class VMManagerClient
             ])
             ->acceptJson()
             ->timeout(30);
+
+        $secret = config('phpless.manager_secret');
+        if ($secret) {
+            $request->withHeaders(['X-Manager-Secret' => $secret]);
+        }
+
+        return $request;
     }
 
     public function health(): array
     {
         return $this->request()->get('/health')->json();
+    }
+
+    public function hostStats(): array
+    {
+        try {
+            return $this->request()->get('/host-stats')->json() ?? [];
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     public function listVMs(): array
@@ -69,7 +85,7 @@ class VMManagerClient
         }
     }
 
-    public function deployCode(string $vmId, string $appDir, string $envContent = '', string $caddyfileContent = '', array $persistentPaths = [], string $workersConfig = ''): array
+    public function deployCode(string $vmId, string $appDir, string $envContent = '', string $caddyfileContent = '', array $persistentPaths = [], string $workersConfig = '', ?int $vcpus = null, ?int $memMib = null, bool $cronEnabled = false): array
     {
         $payload = [
             'app_dir' => $appDir,
@@ -86,6 +102,18 @@ class VMManagerClient
 
         if ($workersConfig !== '') {
             $payload['workers_config'] = $workersConfig;
+        }
+
+        if ($vcpus !== null) {
+            $payload['vcpus'] = $vcpus;
+        }
+
+        if ($memMib !== null) {
+            $payload['mem_mib'] = $memMib;
+        }
+
+        if ($cronEnabled) {
+            $payload['cron_enabled'] = true;
         }
 
         $response = $this->request()->timeout(60)->post("/vms/{$vmId}/deploy", $payload);
@@ -125,12 +153,18 @@ class VMManagerClient
         return $response->json('lines', []);
     }
 
-    public function applyPortMappings(string $vmIp, array $mappings): void
+    public function applyPortMappings(string $vmIp, array $mappings, array $allowedIPs = []): void
     {
-        $response = $this->request()->post('/port-mappings', [
+        $payload = [
             'vm_ip' => $vmIp,
             'mappings' => $mappings,
-        ]);
+        ];
+
+        if (! empty($allowedIPs)) {
+            $payload['allowed_ips'] = $allowedIPs;
+        }
+
+        $response = $this->request()->post('/port-mappings', $payload);
 
         if ($response->failed()) {
             throw new RuntimeException("Failed to apply port mappings: {$response->body()}");
@@ -168,6 +202,82 @@ class VMManagerClient
         }
 
         return $response->json() ?? ['lines' => []];
+    }
+
+    /**
+     * Execute a command inside a VM and return stdout as a string.
+     */
+    public function execInVM(string $vmIp, string $command, int $timeout = 10): string
+    {
+        $response = $this->request()
+            ->timeout($timeout + 5)
+            ->post('/exec', [
+                'vm_ip' => $vmIp,
+                'command' => $command,
+                'timeout_seconds' => $timeout,
+            ]);
+
+        if ($response->failed()) {
+            throw new RuntimeException("Exec failed: {$response->body()}");
+        }
+
+        // Parse NDJSON response — collect stdout
+        $stdout = '';
+        foreach (explode("\n", trim($response->body())) as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $entry = json_decode($line, true);
+            if ($entry && ($entry['stream'] ?? '') === 'stdout') {
+                $stdout .= $entry['data'] ?? '';
+            }
+        }
+
+        return $stdout;
+    }
+
+    /**
+     * Execute a build command inside a VM and return the combined output and exit code.
+     *
+     * @return array{output: string, exit_code: int}
+     */
+    public function execBuildCommand(string $vmIp, string $command, int $timeout = 120): array
+    {
+        $response = $this->request()
+            ->timeout($timeout + 10)
+            ->post('/exec', [
+                'vm_ip' => $vmIp,
+                'command' => $command,
+                'timeout_seconds' => $timeout,
+            ]);
+
+        if ($response->failed()) {
+            throw new RuntimeException("Build exec failed: {$response->body()}");
+        }
+
+        $output = '';
+        $exitCode = 0;
+
+        foreach (explode("\n", trim($response->body())) as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $entry = json_decode($line, true);
+            if (! $entry) {
+                continue;
+            }
+
+            $stream = $entry['stream'] ?? '';
+            if ($stream === 'stdout' || $stream === 'stderr') {
+                $output .= $entry['data'] ?? '';
+            } elseif ($stream === 'exit') {
+                $exitCode = $entry['exit_code'] ?? 0;
+            }
+        }
+
+        return ['output' => $output, 'exit_code' => $exitCode];
     }
 
     public function createTerminalSession(string $vmIp): string
