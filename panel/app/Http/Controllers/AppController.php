@@ -1009,6 +1009,54 @@ class AppController extends Controller
         return response()->json(['message' => 'Deploy from GitHub queued.']);
     }
 
+    public function scanDatabases(App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        if ($app->vm_state !== 'running' || ! $app->vm_ip) {
+            return response()->json(['message' => 'VM is not running.', 'databases' => []], 422);
+        }
+
+        try {
+            // Find all .sqlite, .sqlite3, .db files inside the VM's /app directory
+            $result = $vmManager->execBuildCommand($app->vm_ip, 'find /app -type f \( -name "*.sqlite" -o -name "*.sqlite3" -o -name "*.db" \) 2>/dev/null | head -50', 10);
+            $paths = array_filter(array_map('trim', explode("\n", $result['output'])));
+
+            // Convert to relative paths and verify they're actual SQLite files
+            $detected = [];
+            foreach ($paths as $fullPath) {
+                if (str_starts_with($fullPath, '/app/')) {
+                    $relativePath = substr($fullPath, 5); // Remove /app/ prefix
+                    if ($relativePath) {
+                        $detected[] = $relativePath;
+                    }
+                }
+            }
+
+            // Merge with existing config
+            $merged = SqliteDetector::mergeDetections($app->sqlite_databases ?? [], $detected);
+            $app->update(['sqlite_databases' => $merged]);
+
+            // Sync persistent_paths
+            $persistentPaths = $app->persistent_paths ?? [];
+            foreach ($merged as $db) {
+                if ($db['persistent'] && ! in_array($db['path'], $persistentPaths, true)) {
+                    $persistentPaths[] = $db['path'];
+                }
+            }
+            $app->update(['persistent_paths' => $persistentPaths]);
+
+            return response()->json([
+                'message' => count($detected) > 0
+                    ? 'Found ' . count($detected) . ' SQLite database(s) in the running VM.'
+                    : 'No SQLite databases found in the running VM.',
+                'databases' => $merged,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Failed to scan VM: ' . $e->getMessage(), 'databases' => []], 500);
+        }
+    }
+
     public function updateDatabases(Request $request, App $app): JsonResponse
     {
         Gate::authorize('update', $app);

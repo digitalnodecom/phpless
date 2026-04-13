@@ -31,6 +31,46 @@ export default function DatabaseTab({ app }: { app: App }) {
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [restoring, setRestoring] = useState<string | null>(null);
     const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+    const [scanning, setScanning] = useState(false);
+    const [manualPath, setManualPath] = useState('');
+    const [showManualAdd, setShowManualAdd] = useState(false);
+
+    const handleScanVm = async () => {
+        setScanning(true);
+        setMessage(null);
+        try {
+            const res = await fetch(`/apps/${app.id}/databases/scan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') },
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setDatabases(data.databases ?? []);
+                setMessage({ text: data.message, type: 'success' });
+                setDirty(false);
+                router.reload({ only: ['app'] });
+            } else {
+                setMessage({ text: data.message || 'Scan failed.', type: 'error' });
+            }
+        } catch {
+            setMessage({ text: 'Failed to scan VM.', type: 'error' });
+        } finally {
+            setScanning(false);
+        }
+    };
+
+    const handleManualAdd = () => {
+        const path = manualPath.trim().replace(/^\/+/, '');
+        if (!path) return;
+        if (databases.some((db) => db.path === path)) {
+            setMessage({ text: 'This path is already tracked.', type: 'error' });
+            return;
+        }
+        setDatabases([...databases, { path, persistent: true, backup_enabled: false, detected_at: new Date().toISOString() }]);
+        setManualPath('');
+        setShowManualAdd(false);
+        setDirty(true);
+    };
 
     const updateDb = (index: number, updates: Partial<SqliteDatabase>) => {
         const updated = [...databases];
@@ -102,15 +142,43 @@ export default function DatabaseTab({ app }: { app: App }) {
 
     if (databases.length === 0) {
         return (
-            <Card>
-                <CardContent className="py-12 text-center">
-                    <Database className="text-muted-foreground mx-auto mb-3 h-10 w-10" />
-                    <h3 className="text-lg font-medium">No SQLite databases detected</h3>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                        Deploy your app to automatically detect SQLite database files.
-                    </p>
-                </CardContent>
-            </Card>
+            <div className="space-y-4">
+                {message && (
+                    <div className={`rounded-lg border p-3 ${message.type === 'success' ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+                        <p className="text-sm font-medium">{message.text}</p>
+                    </div>
+                )}
+                <Card>
+                    <CardContent className="py-12 text-center">
+                        <Database className="text-muted-foreground mx-auto mb-3 h-10 w-10" />
+                        <h3 className="text-lg font-medium">No SQLite databases detected</h3>
+                        <p className="text-muted-foreground mt-1 mb-4 text-sm">
+                            Databases are auto-detected on deploy. If your database was created after deploy (e.g., by migrations), scan the running VM or add the path manually.
+                        </p>
+                        <div className="flex items-center justify-center gap-2">
+                            <Button variant="outline" onClick={handleScanVm} disabled={scanning || app.vm_state !== 'running'}>
+                                {scanning ? 'Scanning...' : 'Scan Running VM'}
+                            </Button>
+                            <Button variant="outline" onClick={() => setShowManualAdd(true)}>
+                                Add Manually
+                            </Button>
+                        </div>
+                        {showManualAdd && (
+                            <div className="mt-4 flex items-center justify-center gap-2">
+                                <input
+                                    type="text"
+                                    value={manualPath}
+                                    onChange={(e) => setManualPath(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleManualAdd()}
+                                    placeholder="e.g., database/database.sqlite"
+                                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                                />
+                                <Button size="sm" onClick={handleManualAdd}>Add</Button>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
         );
     }
 
@@ -121,6 +189,30 @@ export default function DatabaseTab({ app }: { app: App }) {
                     <p className="text-sm font-medium">{message.text}</p>
                 </div>
             )}
+
+            <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={handleScanVm} disabled={scanning || app.vm_state !== 'running'}>
+                    {scanning ? 'Scanning...' : 'Scan VM'}
+                </Button>
+                {!showManualAdd ? (
+                    <Button variant="outline" size="sm" onClick={() => setShowManualAdd(true)}>
+                        Add Manually
+                    </Button>
+                ) : (
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={manualPath}
+                            onChange={(e) => setManualPath(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleManualAdd()}
+                            placeholder="e.g., database/database.sqlite"
+                            className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                        />
+                        <Button size="sm" onClick={handleManualAdd}>Add</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setShowManualAdd(false); setManualPath(''); }}>Cancel</Button>
+                    </div>
+                )}
+            </div>
 
             {databases.map((db, index) => (
                 <Card key={db.path}>

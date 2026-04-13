@@ -287,6 +287,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/github/disconnect', [AppController::class, 'githubDisconnect'])->name('apps.github.disconnect');
     Route::post('apps/{app}/github/deploy', [AppController::class, 'githubDeploy'])->name('apps.github.deploy');
     Route::post('apps/{app}/terminal-session', [TerminalController::class, 'store'])->name('apps.terminal-session');
+    Route::post('apps/{app}/databases/scan', [AppController::class, 'scanDatabases'])->name('apps.databases.scan');
     Route::put('apps/{app}/databases', [AppController::class, 'updateDatabases'])->name('apps.databases.update');
     Route::get('apps/{app}/databases/backup', [AppController::class, 'backupDatabase'])->name('apps.databases.backup');
     Route::post('apps/{app}/databases/restore', [AppController::class, 'restoreDatabase'])->name('apps.databases.restore');
