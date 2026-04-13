@@ -100,8 +100,9 @@ ssh "$SERVER" 'chmod 440 /etc/sudoers.d/phpless'
 # Step 6: Restart services
 echo "[6/6] Restarting services..."
 ssh "$SERVER" 'bash -s' << 'SERVICES'
-# Allow www-data to access the VM manager socket
-chmod 0666 /var/fc/manager.sock 2>/dev/null || true
+# Allow www-data to access the VM manager socket (group-only, not world-writable)
+chmod 0660 /var/fc/manager.sock 2>/dev/null || true
+chgrp www-data /var/fc/manager.sock 2>/dev/null || true
 
 # Create log directory for per-app Caddy access logs
 mkdir -p /var/log/phpless/apps
