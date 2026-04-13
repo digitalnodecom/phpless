@@ -14,8 +14,18 @@ type SqliteDatabase struct {
 	BackupEnabled bool   `json:"backup_enabled"`
 }
 
+// StorageEndpointConfig holds S3-compatible storage credentials for Litestream replication.
+type StorageEndpointConfig struct {
+	EndpointURL    string
+	Bucket         string
+	Region         string
+	AccessKeyID    string
+	SecretAccessKey string
+	PathPrefix     string
+}
+
 // DeployToOverlay mounts a tenant's overlay image and syncs app code into it.
-func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool, sqliteDatabases []SqliteDatabase) error {
+func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool, sqliteDatabases []SqliteDatabase, storageEndpoint *StorageEndpointConfig, appSlug string) error {
 	if _, err := os.Stat(overlayPath); os.IsNotExist(err) {
 		return fmt.Errorf("overlay image not found: %s", overlayPath)
 	}
@@ -96,7 +106,7 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 	}
 
 	// Generate Litestream config for backed-up SQLite databases
-	if err := writeLitestreamConfig(etcDir, sqliteDatabases); err != nil {
+	if err := writeLitestreamConfig(etcDir, sqliteDatabases, storageEndpoint, appSlug); err != nil {
 		return fmt.Errorf("write litestream.yml: %w", err)
 	}
 
@@ -118,7 +128,7 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 // requiring a full rootfs rebuild.
 var InitScriptPath = "/srv/firecracker/base/rootfs/init"
 
-func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool, sqliteDatabases []SqliteDatabase) error {
+func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool, sqliteDatabases []SqliteDatabase, storageEndpoint *StorageEndpointConfig, appSlug string) error {
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs image not found: %s", rootfsPath)
 	}
@@ -209,7 +219,7 @@ func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envCont
 
 	// Generate Litestream config for backed-up SQLite databases
 	rootEtcDir := filepath.Join(mountDir, "etc")
-	if err := writeLitestreamConfig(rootEtcDir, sqliteDatabases); err != nil {
+	if err := writeLitestreamConfig(rootEtcDir, sqliteDatabases, storageEndpoint, appSlug); err != nil {
 		return fmt.Errorf("write litestream.yml: %w", err)
 	}
 
@@ -244,8 +254,9 @@ func CreateOverlay(path string, sizeMB int) error {
 }
 
 // writeLitestreamConfig generates /etc/litestream.yml for databases with backup_enabled,
-// or removes it if no databases need backup. mountDir is the root of the mounted filesystem.
-func writeLitestreamConfig(etcDir string, databases []SqliteDatabase) error {
+// or removes it if no databases need backup. When a storage endpoint is provided, S3
+// replicas are added alongside the local file replica for off-site durability.
+func writeLitestreamConfig(etcDir string, databases []SqliteDatabase, storageEndpoint *StorageEndpointConfig, appSlug string) error {
 	configPath := filepath.Join(etcDir, "litestream.yml")
 
 	// Collect backed-up databases
@@ -275,6 +286,30 @@ func writeLitestreamConfig(etcDir string, databases []SqliteDatabase) error {
 		replicaName := sanitizeReplicaPath(db.Path)
 		b.WriteString(fmt.Sprintf("  - path: %s\n", dbPath))
 		b.WriteString("    replicas:\n")
+
+		// S3 replica (primary, if storage endpoint configured)
+		if storageEndpoint != nil && storageEndpoint.Bucket != "" {
+			s3Path := replicaName
+			if appSlug != "" {
+				s3Path = "apps/" + appSlug + "/" + replicaName
+			}
+			if storageEndpoint.PathPrefix != "" {
+				s3Path = strings.TrimRight(storageEndpoint.PathPrefix, "/") + "/" + s3Path
+			}
+			b.WriteString("      - type: s3\n")
+			if storageEndpoint.EndpointURL != "" {
+				b.WriteString(fmt.Sprintf("        endpoint: %s\n", storageEndpoint.EndpointURL))
+			}
+			b.WriteString(fmt.Sprintf("        bucket: %s\n", storageEndpoint.Bucket))
+			b.WriteString(fmt.Sprintf("        path: %s\n", s3Path))
+			b.WriteString(fmt.Sprintf("        access-key-id: %s\n", storageEndpoint.AccessKeyID))
+			b.WriteString(fmt.Sprintf("        secret-access-key: %s\n", storageEndpoint.SecretAccessKey))
+			if storageEndpoint.Region != "" {
+				b.WriteString(fmt.Sprintf("        region: %s\n", storageEndpoint.Region))
+			}
+		}
+
+		// Local file replica (always present for fast restores)
 		b.WriteString("      - type: file\n")
 		b.WriteString(fmt.Sprintf("        path: /var/backups/litestream/%s\n", replicaName))
 	}

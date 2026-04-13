@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { type NavItem } from '@/types';
 import { Link } from '@inertiajs/react';
 
-const sidebarNavItems: NavItem[] = [
+const accountNavItems: NavItem[] = [
     {
         title: 'Profile',
         url: '/settings/profile',
@@ -26,29 +26,54 @@ const sidebarNavItems: NavItem[] = [
         url: '/settings/api-tokens',
         icon: null,
     },
+];
+
+const teamNavItems: NavItem[] = [
     {
-        title: 'Billing',
-        url: '/settings/billing',
+        title: 'General',
+        url: '/settings/team',
         icon: null,
     },
     {
-        title: 'Team',
-        url: '/settings/team',
+        title: 'Members',
+        url: '/settings/team/members',
+        icon: null,
+    },
+    {
+        title: 'Environment Variables',
+        url: '/settings/team/env',
+        icon: null,
+    },
+    {
+        title: 'Storage Endpoints',
+        url: '/settings/team/storage',
+        icon: null,
+    },
+    {
+        title: 'Billing',
+        url: '/settings/team/billing',
         icon: null,
     },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
     const currentPath = window.location.pathname;
+    const isTeamSettings = currentPath.startsWith('/settings/team');
+
+    const navItems = isTeamSettings ? teamNavItems : accountNavItems;
+    const title = isTeamSettings ? 'Team Settings' : 'Account Settings';
+    const description = isTeamSettings
+        ? 'Manage your team configuration and members'
+        : 'Manage your profile and account settings';
 
     return (
         <div className="px-4 py-6">
-            <Heading title="Settings" description="Manage your profile and account settings" />
+            <Heading title={title} description={description} />
 
             <div className="flex flex-col space-y-8 lg:flex-row lg:space-y-0 lg:space-x-12">
                 <aside className="w-full max-w-xl lg:w-48">
                     <nav className="flex flex-col space-y-1 space-x-0">
-                        {sidebarNavItems.map((item) => (
+                        {navItems.map((item) => (
                             <Button
                                 key={item.url}
                                 size="sm"

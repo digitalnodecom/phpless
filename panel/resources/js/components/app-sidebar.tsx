@@ -5,7 +5,7 @@ import { TeamSwitcher } from '@/components/team-switcher';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { type NavItem } from '@/types';
 import { usePage } from '@inertiajs/react';
-import { BookOpen, Boxes, Code2, LayoutGrid, Settings, ShieldCheck } from 'lucide-react';
+import { BookOpen, Boxes, Code2, LayoutGrid, ShieldCheck } from 'lucide-react';
 import { Link } from '@inertiajs/react';
 import AppLogo from './app-logo';
 
@@ -19,11 +19,6 @@ const mainNavItems: NavItem[] = [
         title: 'Apps',
         url: '/apps',
         icon: Boxes,
-    },
-    {
-        title: 'Settings',
-        url: '/settings/profile',
-        icon: Settings,
     },
 ];
 

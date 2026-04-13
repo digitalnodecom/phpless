@@ -43,6 +43,16 @@ class Team extends Model
         return $this->hasMany(TeamInvitation::class);
     }
 
+    public function storageEndpoints(): HasMany
+    {
+        return $this->hasMany(StorageEndpoint::class);
+    }
+
+    public function defaultStorageEndpoint(): ?StorageEndpoint
+    {
+        return $this->storageEndpoints()->where('is_default', true)->first();
+    }
+
     public function planConfig(): array
     {
         return config('phpless.plans.' . $this->plan, config('phpless.plans.sandbox'));

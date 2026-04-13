@@ -10,13 +10,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import SettingsLayout from '@/layouts/settings/layout';
 import AppLayout from '@/layouts/app-layout';
 import { type BreadcrumbItem, type EnvironmentVariable } from '@/types';
 import { Head } from '@inertiajs/react';
@@ -31,11 +30,11 @@ function getCookie(name: string): string {
 }
 
 const breadcrumbs: BreadcrumbItem[] = [
-    { title: 'Dashboard', href: '/dashboard' },
-    { title: 'Settings', href: '/settings/team/env' },
+    { title: 'Team Settings', href: '/settings/team' },
+    { title: 'Environment Variables', href: '/settings/team/env' },
 ];
 
-export default function TeamSettings({ vars: initialVars }: { vars: EnvironmentVariable[] }) {
+export default function TeamEnv({ vars: initialVars }: { vars: EnvironmentVariable[] }) {
     const [vars, setVars] = useState<EnvironmentVariable[]>(initialVars);
     const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
     const [showAddDialog, setShowAddDialog] = useState(false);
@@ -132,186 +131,172 @@ export default function TeamSettings({ vars: initialVars }: { vars: EnvironmentV
 
     return (
         <AppLayout breadcrumbs={breadcrumbs}>
-            <Head title="Settings" />
-            <div className="flex h-full flex-1 flex-col gap-4 p-4">
-                <div>
-                    <h1 className="text-2xl font-bold">Settings</h1>
-                    <p className="text-muted-foreground text-sm">Manage your team settings and configuration.</p>
+            <Head title="Team Environment Variables" />
+            <SettingsLayout>
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h3 className="text-lg font-medium">Environment Variables</h3>
+                            <p className="text-sm text-muted-foreground">
+                                Shared across all apps in your team. App-level variables override team-level on key collision.
+                            </p>
+                        </div>
+                        <Button size="sm" onClick={openAdd}>
+                            <Plus className="mr-2 h-3 w-3" />
+                            Add Variable
+                        </Button>
+                    </div>
+
+                    {vars.length === 0 ? (
+                        <p className="text-muted-foreground py-4 text-center text-sm">
+                            No team environment variables configured. Variables added here will be available to all apps in the team.
+                        </p>
+                    ) : (
+                        <div className="overflow-x-auto rounded-md border">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-muted-foreground border-b text-left text-xs">
+                                        <th className="px-4 pb-2 pt-3 pr-4">Key</th>
+                                        <th className="px-4 pb-2 pt-3 pr-4">Value</th>
+                                        <th className="px-4 pb-2 pt-3 pr-4">Secret</th>
+                                        <th className="px-4 pb-2 pt-3">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {vars.map((v) => (
+                                        <tr key={v.id} className="border-b last:border-0">
+                                            <td className="px-4 py-2 pr-4 font-mono text-xs font-medium">{v.key}</td>
+                                            <td className="px-4 py-2 pr-4 font-mono text-xs">
+                                                {v.is_secret ? (
+                                                    <span className="flex items-center gap-2">
+                                                        {revealedIds.has(v.id) ? v.value || '(encrypted)' : '********'}
+                                                        <button onClick={() => toggleReveal(v.id)} className="text-muted-foreground hover:text-foreground">
+                                                            {revealedIds.has(v.id) ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                                        </button>
+                                                    </span>
+                                                ) : (
+                                                    <span className="max-w-[400px] truncate">{v.value}</span>
+                                                )}
+                                            </td>
+                                            <td className="px-4 py-2 pr-4">
+                                                {v.is_secret && <Badge variant="outline">Secret</Badge>}
+                                            </td>
+                                            <td className="px-4 py-2">
+                                                <div className="flex items-center gap-1">
+                                                    <Button variant="ghost" size="sm" onClick={() => openEdit(v)}>
+                                                        <Pencil className="h-3 w-3" />
+                                                    </Button>
+                                                    <Button variant="ghost" size="sm" onClick={() => setDeletingVar(v)}>
+                                                        <Trash2 className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
 
-                <Tabs defaultValue="environment">
-                    <TabsList>
-                        <TabsTrigger value="environment">Environment</TabsTrigger>
-                    </TabsList>
+                {/* Add Dialog */}
+                <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Add Team Variable</DialogTitle>
+                            <DialogDescription>This variable will be available to all apps in the team unless overridden at the app level.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                            <div>
+                                <Label htmlFor="team-env-key">Key</Label>
+                                <Input
+                                    id="team-env-key"
+                                    placeholder="STRIPE_SECRET_KEY"
+                                    value={formKey}
+                                    onChange={(e) => setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
+                                    className="font-mono"
+                                />
+                                {formErrors.key && <p className="mt-1 text-xs text-red-500">{formErrors.key[0]}</p>}
+                            </div>
+                            <div>
+                                <Label htmlFor="team-env-value">Value</Label>
+                                <Textarea id="team-env-value" placeholder="Enter value..." value={formValue} onChange={(e) => setFormValue(e.target.value)} rows={3} className="font-mono" />
+                                {formErrors.value && <p className="mt-1 text-xs text-red-500">{formErrors.value[0]}</p>}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Checkbox id="team-env-secret" checked={formSecret} onCheckedChange={(v) => setFormSecret(v === true)} />
+                                <Label htmlFor="team-env-secret" className="text-sm font-normal">
+                                    Mark as secret
+                                </Label>
+                            </div>
+                        </div>
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setShowAddDialog(false)}>
+                                Cancel
+                            </Button>
+                            <Button onClick={handleAdd} disabled={saving || !formKey || !formValue}>
+                                {saving ? 'Adding...' : 'Add Variable'}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
-                    <TabsContent value="environment" className="mt-4">
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between">
-                                <div>
-                                    <CardTitle>Team Environment Variables</CardTitle>
-                                    <p className="text-muted-foreground mt-1 text-sm">
-                                        Shared across all apps in your team. App-level variables override team-level on key collision.
-                                    </p>
-                                </div>
-                                <Button size="sm" onClick={openAdd}>
-                                    <Plus className="mr-2 h-3 w-3" />
-                                    Add Variable
-                                </Button>
-                            </CardHeader>
-                            <CardContent>
-                                {vars.length === 0 ? (
-                                    <p className="text-muted-foreground py-4 text-center text-sm">
-                                        No team environment variables configured. Variables added here will be available to all apps in the team.
-                                    </p>
-                                ) : (
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full text-sm">
-                                            <thead>
-                                                <tr className="text-muted-foreground border-b text-left text-xs">
-                                                    <th className="pb-2 pr-4">Key</th>
-                                                    <th className="pb-2 pr-4">Value</th>
-                                                    <th className="pb-2 pr-4">Secret</th>
-                                                    <th className="pb-2">Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {vars.map((v) => (
-                                                    <tr key={v.id} className="border-b last:border-0">
-                                                        <td className="py-2 pr-4 font-mono text-xs font-medium">{v.key}</td>
-                                                        <td className="py-2 pr-4 font-mono text-xs">
-                                                            {v.is_secret ? (
-                                                                <span className="flex items-center gap-2">
-                                                                    {revealedIds.has(v.id) ? v.value || '(encrypted)' : '********'}
-                                                                    <button onClick={() => toggleReveal(v.id)} className="text-muted-foreground hover:text-foreground">
-                                                                        {revealedIds.has(v.id) ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                                                                    </button>
-                                                                </span>
-                                                            ) : (
-                                                                <span className="max-w-[400px] truncate">{v.value}</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="py-2 pr-4">
-                                                            {v.is_secret && <Badge variant="outline">Secret</Badge>}
-                                                        </td>
-                                                        <td className="py-2">
-                                                            <div className="flex items-center gap-1">
-                                                                <Button variant="ghost" size="sm" onClick={() => openEdit(v)}>
-                                                                    <Pencil className="h-3 w-3" />
-                                                                </Button>
-                                                                <Button variant="ghost" size="sm" onClick={() => setDeletingVar(v)}>
-                                                                    <Trash2 className="h-3 w-3" />
-                                                                </Button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
-                </Tabs>
-            </div>
+                {/* Edit Dialog */}
+                <Dialog open={!!editingVar} onOpenChange={(open) => !open && setEditingVar(null)}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Edit Team Variable</DialogTitle>
+                            <DialogDescription>
+                                Update the value for <span className="font-mono font-semibold">{editingVar?.key}</span>
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                            <div>
+                                <Label htmlFor="team-edit-value">Value</Label>
+                                <Textarea
+                                    id="team-edit-value"
+                                    placeholder="Enter new value..."
+                                    value={formValue}
+                                    onChange={(e) => setFormValue(e.target.value)}
+                                    rows={3}
+                                    className="font-mono"
+                                />
+                                {formErrors.value && <p className="mt-1 text-xs text-red-500">{formErrors.value[0]}</p>}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Checkbox id="team-edit-secret" checked={formSecret} onCheckedChange={(v) => setFormSecret(v === true)} />
+                                <Label htmlFor="team-edit-secret" className="text-sm font-normal">
+                                    Mark as secret
+                                </Label>
+                            </div>
+                        </div>
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setEditingVar(null)}>
+                                Cancel
+                            </Button>
+                            <Button onClick={handleEdit} disabled={saving || !formValue}>
+                                {saving ? 'Saving...' : 'Save Changes'}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
-            {/* Add Dialog */}
-            <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Add Team Variable</DialogTitle>
-                        <DialogDescription>This variable will be available to all apps in the team unless overridden at the app level.</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                        <div>
-                            <Label htmlFor="team-env-key">Key</Label>
-                            <Input
-                                id="team-env-key"
-                                placeholder="STRIPE_SECRET_KEY"
-                                value={formKey}
-                                onChange={(e) => setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-                                className="font-mono"
-                            />
-                            {formErrors.key && <p className="mt-1 text-xs text-red-500">{formErrors.key[0]}</p>}
-                        </div>
-                        <div>
-                            <Label htmlFor="team-env-value">Value</Label>
-                            <Textarea id="team-env-value" placeholder="Enter value..." value={formValue} onChange={(e) => setFormValue(e.target.value)} rows={3} className="font-mono" />
-                            {formErrors.value && <p className="mt-1 text-xs text-red-500">{formErrors.value[0]}</p>}
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Checkbox id="team-env-secret" checked={formSecret} onCheckedChange={(v) => setFormSecret(v === true)} />
-                            <Label htmlFor="team-env-secret" className="text-sm font-normal">
-                                Mark as secret
-                            </Label>
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowAddDialog(false)}>
-                            Cancel
-                        </Button>
-                        <Button onClick={handleAdd} disabled={saving || !formKey || !formValue}>
-                            {saving ? 'Adding...' : 'Add Variable'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Edit Dialog */}
-            <Dialog open={!!editingVar} onOpenChange={(open) => !open && setEditingVar(null)}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Edit Team Variable</DialogTitle>
-                        <DialogDescription>
-                            Update the value for <span className="font-mono font-semibold">{editingVar?.key}</span>
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                        <div>
-                            <Label htmlFor="team-edit-value">Value</Label>
-                            <Textarea
-                                id="team-edit-value"
-                                placeholder="Enter new value..."
-                                value={formValue}
-                                onChange={(e) => setFormValue(e.target.value)}
-                                rows={3}
-                                className="font-mono"
-                            />
-                            {formErrors.value && <p className="mt-1 text-xs text-red-500">{formErrors.value[0]}</p>}
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Checkbox id="team-edit-secret" checked={formSecret} onCheckedChange={(v) => setFormSecret(v === true)} />
-                            <Label htmlFor="team-edit-secret" className="text-sm font-normal">
-                                Mark as secret
-                            </Label>
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setEditingVar(null)}>
-                            Cancel
-                        </Button>
-                        <Button onClick={handleEdit} disabled={saving || !formValue}>
-                            {saving ? 'Saving...' : 'Save Changes'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Delete Confirmation */}
-            <AlertDialog open={!!deletingVar} onOpenChange={(open) => !open && setDeletingVar(null)}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Delete {deletingVar?.key}?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This will remove this team-level variable. All apps using it will need to be redeployed.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                {/* Delete Confirmation */}
+                <AlertDialog open={!!deletingVar} onOpenChange={(open) => !open && setDeletingVar(null)}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete {deletingVar?.key}?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                This will remove this team-level variable. All apps using it will need to be redeployed.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+            </SettingsLayout>
         </AppLayout>
     );
 }

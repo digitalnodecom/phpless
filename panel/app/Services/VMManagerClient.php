@@ -85,12 +85,16 @@ class VMManagerClient
         }
     }
 
-    public function deployCode(string $vmId, string $appDir, string $envContent = '', string $caddyfileContent = '', array $persistentPaths = [], string $workersConfig = '', ?int $vcpus = null, ?int $memMib = null, bool $cronEnabled = false, array $sqliteDatabases = []): array
+    public function deployCode(string $vmId, string $appDir, string $envContent = '', string $caddyfileContent = '', array $persistentPaths = [], string $workersConfig = '', ?int $vcpus = null, ?int $memMib = null, bool $cronEnabled = false, array $sqliteDatabases = [], ?string $appSlug = null, ?\App\Models\StorageEndpoint $storageEndpoint = null): array
     {
         $payload = [
             'app_dir' => $appDir,
             'persistent_paths' => $persistentPaths,
         ];
+
+        if ($appSlug !== null) {
+            $payload['app_slug'] = $appSlug;
+        }
 
         if ($envContent !== '') {
             $payload['env_content'] = $envContent;
@@ -118,6 +122,17 @@ class VMManagerClient
 
         if (! empty($sqliteDatabases)) {
             $payload['sqlite_databases'] = $sqliteDatabases;
+        }
+
+        if ($storageEndpoint) {
+            $payload['storage_endpoint'] = [
+                'endpoint_url' => $storageEndpoint->endpoint_url,
+                'bucket' => $storageEndpoint->bucket,
+                'region' => $storageEndpoint->region,
+                'access_key_id' => $storageEndpoint->access_key_id,
+                'secret_access_key' => $storageEndpoint->secret_access_key,
+                'path_prefix' => $storageEndpoint->path_prefix,
+            ];
         }
 
         $response = $this->request()->timeout(60)->post("/vms/{$vmId}/deploy", $payload);

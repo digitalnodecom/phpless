@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\AppController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\EnvController;
+use App\Http\Controllers\Api\V1\StorageEndpointController;
 use App\Http\Controllers\Api\V1\TeamController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\WebhookController;
@@ -22,6 +23,7 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
         Route::get('user', [UserController::class, 'show']);
         Route::get('team', [TeamController::class, 'show']);
         Route::get('team/env', [TeamController::class, 'envIndex']);
+        Route::get('team/storage-endpoints', [StorageEndpointController::class, 'index']);
 
         // Apps — read endpoints
         Route::get('apps', [AppController::class, 'index']);
@@ -71,6 +73,10 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
         Route::delete('team/env/{key}', [TeamController::class, 'envDestroy']);
         Route::put('apps/{app:slug}/env', [EnvController::class, 'set']);
         Route::delete('apps/{app:slug}/env/{key}', [EnvController::class, 'destroy']);
+
+        Route::post('team/storage-endpoints', [StorageEndpointController::class, 'store']);
+        Route::put('team/storage-endpoints/{endpoint}', [StorageEndpointController::class, 'update']);
+        Route::delete('team/storage-endpoints/{endpoint}', [StorageEndpointController::class, 'destroy']);
     });
 
     // App delete — general reads limiter (infrequent operation)

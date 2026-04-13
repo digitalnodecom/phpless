@@ -70,7 +70,7 @@ export default function AppsCreate({ plan, app_count }: { plan: PlanLimits; app_
                             <AlertDescription>
                                 Your {plan.label} plan allows {plan.app_limit} {plan.app_limit === 1 ? 'app' : 'apps'}.
                                 You&apos;ve used {app_count} of {plan.app_limit}.{' '}
-                                <Link href="/settings/billing" className="underline font-medium">
+                                <Link href="/settings/team/billing" className="underline font-medium">
                                     Upgrade your plan
                                 </Link>{' '}
                                 to create more.

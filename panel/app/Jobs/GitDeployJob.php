@@ -107,6 +107,8 @@ class GitDeployJob implements ShouldQueue
                 null,
                 $this->app->cron_enabled,
                 $this->app->sqlite_databases ?? [],
+                $this->app->slug,
+                $this->app->effectiveStorageEndpoint(),
             );
 
             $newVmId = $result['vm_id'] ?? $this->app->vm_id;

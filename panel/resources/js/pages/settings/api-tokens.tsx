@@ -19,10 +19,8 @@ interface Token {
 }
 
 const breadcrumbs: BreadcrumbItem[] = [
-    {
-        title: 'API Tokens',
-        href: '/settings/api-tokens',
-    },
+    { title: 'Account Settings', href: '/settings/profile' },
+    { title: 'API Tokens', href: '/settings/api-tokens' },
 ];
 
 export default function ApiTokens({ tokens }: { tokens: Token[] }) {

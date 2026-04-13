@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\EnvironmentVariable;
 use App\Models\Team;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -14,6 +13,23 @@ use Inertia\Response;
 class TeamController extends Controller
 {
     public function edit(Request $request): Response
+    {
+        $user = $request->user();
+        $team = $user->currentTeam;
+        $isOwner = $team->owner_id === $user->id;
+
+        return Inertia::render('settings/team', [
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+                'slug' => $team->slug,
+                'owner_id' => $team->owner_id,
+            ],
+            'isOwner' => $isOwner,
+        ]);
+    }
+
+    public function members(Request $request): Response
     {
         $user = $request->user();
         $team = $user->currentTeam->load(['users' => function ($q) {
@@ -42,29 +58,16 @@ class TeamController extends Controller
             ])
             : collect();
 
-        $envVars = EnvironmentVariable::forTeam($team->id)
-            ->orderBy('key')
-            ->get()
-            ->map(fn ($v) => [
-                'id' => $v->id,
-                'key' => $v->key,
-                'value' => $v->is_secret ? null : $v->value,
-                'is_secret' => $v->is_secret,
-                'source' => 'team',
-            ]);
-
-        return Inertia::render('settings/team', [
+        return Inertia::render('settings/team-members', [
             'team' => [
                 'id' => $team->id,
                 'name' => $team->name,
-                'slug' => $team->slug,
                 'owner_id' => $team->owner_id,
             ],
             'members' => $members,
             'pendingInvitations' => $pendingInvitations,
             'isOwner' => $isOwner,
             'userRole' => $user->roleInTeam($team),
-            'envVars' => $envVars,
         ]);
     }
 

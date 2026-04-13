@@ -193,7 +193,7 @@ class AppController extends Controller
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? [], $app->slug, $app->effectiveStorageEndpoint());
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {
@@ -307,7 +307,7 @@ class AppController extends Controller
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? [], $app->slug, $app->effectiveStorageEndpoint());
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {

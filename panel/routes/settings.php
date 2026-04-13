@@ -12,6 +12,7 @@ use Inertia\Inertia;
 Route::middleware('auth')->group(function () {
     Route::redirect('settings', 'settings/profile');
 
+    // Account settings
     Route::get('settings/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('settings/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('settings/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
@@ -27,16 +28,20 @@ Route::middleware('auth')->group(function () {
     Route::post('settings/api-tokens', [ApiTokenController::class, 'store'])->name('api-tokens.store');
     Route::delete('settings/api-tokens/{token}', [ApiTokenController::class, 'destroy'])->name('api-tokens.destroy');
 
-    Route::get('settings/billing', [BillingController::class, 'index'])->name('settings.billing');
-    Route::post('settings/billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
-    Route::post('settings/billing/portal', [BillingController::class, 'portal'])->name('billing.portal');
-    Route::get('settings/billing/usage', [BillingController::class, 'usage'])->name('billing.usage');
-
+    // Team settings
     Route::get('settings/team', [TeamController::class, 'edit'])->name('settings.team');
     Route::put('settings/team', [TeamController::class, 'update'])->name('settings.team.update');
+
+    Route::get('settings/team/members', [TeamController::class, 'members'])->name('settings.team.members');
     Route::delete('settings/team/members/{user}', [TeamController::class, 'removeMember'])->name('settings.team.remove');
     Route::put('settings/team/members/{user}/role', [TeamController::class, 'updateRole'])->name('settings.team.role');
     Route::post('settings/team/leave', [TeamController::class, 'leave'])->name('settings.team.leave');
     Route::post('settings/team/invitations', [TeamInvitationController::class, 'store'])->name('settings.team.invitations.store');
     Route::delete('settings/team/invitations/{invitation}', [TeamInvitationController::class, 'destroy'])->name('settings.team.invitations.destroy');
+
+    // Billing (team-scoped)
+    Route::get('settings/team/billing', [BillingController::class, 'index'])->name('settings.billing');
+    Route::post('settings/team/billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
+    Route::post('settings/team/billing/portal', [BillingController::class, 'portal'])->name('billing.portal');
+    Route::get('settings/team/billing/usage', [BillingController::class, 'usage'])->name('billing.usage');
 });

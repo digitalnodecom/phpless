@@ -5,6 +5,7 @@ use App\Http\Controllers\AppController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DomainController;
 use App\Http\Controllers\EnvironmentVariableController;
+use App\Http\Controllers\StorageEndpointController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\TeamEnvironmentVariableController;
 use App\Http\Controllers\TeamInvitationController;
@@ -291,6 +292,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::put('apps/{app}/databases', [AppController::class, 'updateDatabases'])->name('apps.databases.update');
     Route::get('apps/{app}/databases/backup', [AppController::class, 'backupDatabase'])->name('apps.databases.backup');
     Route::post('apps/{app}/databases/restore', [AppController::class, 'restoreDatabase'])->name('apps.databases.restore');
+    Route::put('apps/{app}/storage-endpoint', [AppController::class, 'updateStorageEndpoint'])->name('apps.storage-endpoint.update');
     Route::post('apps/{app}/log-session', [AppController::class, 'logSession'])->name('apps.log-session');
     Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
     Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
@@ -311,16 +313,19 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('teams', [TeamController::class, 'store'])->name('teams.store');
     Route::post('teams/{team}/switch', [TeamController::class, 'switchTeam'])->name('teams.switch');
 
-    // Team settings (JSON requests get env vars data; browser navigations redirect to unified team page)
-    Route::get('settings/team/env', function (\Illuminate\Http\Request $request) {
-        if ($request->wantsJson()) {
-            return app(\App\Http\Controllers\TeamEnvironmentVariableController::class)->index($request);
-        }
-        return redirect('/settings/team');
-    })->name('team.env.index');
+    // Team environment variables
+    Route::get('settings/team/env', [TeamEnvironmentVariableController::class, 'index'])->name('team.env.index');
     Route::post('settings/team/env', [TeamEnvironmentVariableController::class, 'store'])->name('team.env.store');
     Route::put('settings/team/env/{envVar}', [TeamEnvironmentVariableController::class, 'update'])->name('team.env.update');
     Route::delete('settings/team/env/{envVar}', [TeamEnvironmentVariableController::class, 'destroy'])->name('team.env.destroy');
+
+    // Storage endpoints
+    Route::get('settings/team/storage', [StorageEndpointController::class, 'index'])->name('team.storage.index');
+    Route::post('settings/team/storage', [StorageEndpointController::class, 'store'])->name('team.storage.store');
+    Route::put('settings/team/storage/{endpoint}', [StorageEndpointController::class, 'update'])->name('team.storage.update');
+    Route::delete('settings/team/storage/{endpoint}', [StorageEndpointController::class, 'destroy'])->name('team.storage.destroy');
+    Route::post('settings/team/storage/{endpoint}/test', [StorageEndpointController::class, 'test'])->name('team.storage.test');
+    Route::post('settings/team/storage/{endpoint}/default', [StorageEndpointController::class, 'setDefault'])->name('team.storage.default');
 });
 
 // Stripe webhook (no auth middleware)

@@ -131,9 +131,20 @@ type VMResponse struct {
 	CPUPct    float64   `json:"cpu_pct"`    // CPU usage percentage (0-100 per vCPU)
 }
 
+// StorageEndpointConfig holds S3-compatible storage credentials for Litestream replication.
+type StorageEndpointConfig struct {
+	EndpointURL    string `json:"endpoint_url"`
+	Bucket         string `json:"bucket"`
+	Region         string `json:"region"`
+	AccessKeyID    string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	PathPrefix     string `json:"path_prefix"`
+}
+
 // DeployRequest is the request body for deploying code.
 type DeployRequest struct {
 	AppDir           string                  `json:"app_dir"`
+	AppSlug          string                  `json:"app_slug,omitempty"`          // app slug for S3 path namespacing
 	PersistentPaths  []string                `json:"persistent_paths,omitempty"`
 	EnvContent       string                  `json:"env_content,omitempty"`
 	CaddyfileContent string                  `json:"caddyfile_content,omitempty"`
@@ -142,6 +153,7 @@ type DeployRequest struct {
 	VCPUs            int                     `json:"vcpus,omitempty"`             // resize: new vCPU count
 	MemMiB           int                     `json:"mem_mib,omitempty"`           // resize: new memory in MiB
 	SqliteDatabases  []deploy.SqliteDatabase `json:"sqlite_databases,omitempty"`  // SQLite databases with backup config
+	StorageEndpoint  *StorageEndpointConfig  `json:"storage_endpoint,omitempty"`  // S3 storage for Litestream replication
 }
 
 // UpstreamResponse is returned for Caddy routing queries.
@@ -274,9 +286,22 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Convert API storage endpoint to deploy package type
+	var storageEP *deploy.StorageEndpointConfig
+	if req.StorageEndpoint != nil {
+		storageEP = &deploy.StorageEndpointConfig{
+			EndpointURL:    req.StorageEndpoint.EndpointURL,
+			Bucket:         req.StorageEndpoint.Bucket,
+			Region:         req.StorageEndpoint.Region,
+			AccessKeyID:    req.StorageEndpoint.AccessKeyID,
+			SecretAccessKey: req.StorageEndpoint.SecretAccessKey,
+			PathPrefix:     req.StorageEndpoint.PathPrefix,
+		}
+	}
+
 	if v.Config.Overlay {
 		overlayPath := v.Config.OverlayPath(s.manager.TenantDir())
-		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.PersistentPaths, req.EnvContent, req.CaddyfileContent, req.WorkersConfig, req.CronEnabled, req.SqliteDatabases); err != nil {
+		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.PersistentPaths, req.EnvContent, req.CaddyfileContent, req.WorkersConfig, req.CronEnabled, req.SqliteDatabases, storageEP, req.AppSlug); err != nil {
 			httpError(w, http.StatusInternalServerError, "deploy failed: %v", err)
 			return
 		}
@@ -292,14 +317,16 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 	var deployFn func(rootfsPath string) error
 	if req.AppDir != "" {
 		appDir := req.AppDir
+		appSlug := req.AppSlug
 		persistentPaths := req.PersistentPaths
 		envContent := req.EnvContent
 		caddyfileContent := req.CaddyfileContent
 		workersConfig := req.WorkersConfig
 		cronEnabled := req.CronEnabled
 		sqliteDatabases := req.SqliteDatabases
+		storageEndpoint := storageEP
 		deployFn = func(rootfsPath string) error {
-			return deploy.DeployToRootfs(rootfsPath, appDir, persistentPaths, envContent, caddyfileContent, workersConfig, cronEnabled, sqliteDatabases)
+			return deploy.DeployToRootfs(rootfsPath, appDir, persistentPaths, envContent, caddyfileContent, workersConfig, cronEnabled, sqliteDatabases, storageEndpoint, appSlug)
 		}
 	}
 	newVM, err := s.manager.Redeploy(id, deployFn, cfgOverride)

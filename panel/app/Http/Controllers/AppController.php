@@ -128,6 +128,7 @@ class AppController extends Controller
                 $q->with('triggeredBy:id,name')->latest()->limit(10);
             }, 'domains']),
             'serverIp' => config('phpless.server_ip'),
+            'storageEndpoints' => $app->team->storageEndpoints()->get(),
         ]);
     }
 
@@ -419,7 +420,7 @@ class AppController extends Controller
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? [], $app->slug, $app->effectiveStorageEndpoint());
 
             // Deploy restarts the VM — sync the new VM state
             $newVmId = $result['vm_id'] ?? $app->vm_id;
@@ -526,7 +527,7 @@ class AppController extends Controller
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? [], $app->slug, $app->effectiveStorageEndpoint());
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {
@@ -681,7 +682,7 @@ class AppController extends Controller
                 $envContent = $envService->generateEnvContent($app);
                 $caddyContent = (new CaddyfileGenerator)->generate($app);
                 $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-                $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, $app->vcpus, $app->mem_mib, $app->cron_enabled, $app->sqlite_databases ?? []);
+                $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, $app->vcpus, $app->mem_mib, $app->cron_enabled, $app->sqlite_databases ?? [], $app->slug, $app->effectiveStorageEndpoint());
             } else {
                 // Resize-only (no code to deploy) — pass empty app_dir with new specs
                 $result = $vmManager->deployCode($app->vm_id, '', '', '', [], '', $app->vcpus, $app->mem_mib, $app->cron_enabled);
@@ -1132,6 +1133,27 @@ class AppController extends Controller
         }
     }
 
+    public function updateStorageEndpoint(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('update', $app);
+
+        $validated = $request->validate([
+            'storage_endpoint_id' => ['nullable', 'integer', 'exists:storage_endpoints,id'],
+        ]);
+
+        // Verify the storage endpoint belongs to the app's team
+        if ($validated['storage_endpoint_id']) {
+            $endpoint = \App\Models\StorageEndpoint::find($validated['storage_endpoint_id']);
+            if (! $endpoint || $endpoint->team_id !== $app->team_id) {
+                return response()->json(['message' => 'Storage endpoint not found.'], 422);
+            }
+        }
+
+        $app->update(['storage_endpoint_id' => $validated['storage_endpoint_id']]);
+
+        return response()->json(['message' => 'Storage endpoint updated. Redeploy to apply changes.']);
+    }
+
     public function restoreDatabase(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
     {
         Gate::authorize('update', $app);
@@ -1152,7 +1174,10 @@ class AppController extends Controller
         }
 
         try {
-            $vmManager->execInVM($app->vm_ip, 'litestream restore -o /app/' . escapeshellarg($path) . ' /app/' . escapeshellarg($path));
+            // If app has S3 storage endpoint, prefer restoring from S3 replica
+            $storageEndpoint = $app->effectiveStorageEndpoint();
+            $replicaFlag = $storageEndpoint ? ' -replica s3' : '';
+            $vmManager->execInVM($app->vm_ip, 'litestream restore' . $replicaFlag . ' -o /app/' . escapeshellarg($path) . ' /app/' . escapeshellarg($path));
 
             return response()->json(['message' => 'Database restored from backup.']);
         } catch (\Throwable $e) {

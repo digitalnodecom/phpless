@@ -31,6 +31,7 @@ class App extends Model
         'ip_allowlist',
         'cron_enabled',
         'cron_schedule',
+        'storage_endpoint_id',
     ];
 
     protected function casts(): array
@@ -71,6 +72,11 @@ class App extends Model
         return $this->hasMany(EnvironmentVariable::class);
     }
 
+    public function storageEndpoint(): BelongsTo
+    {
+        return $this->belongsTo(StorageEndpoint::class);
+    }
+
     public function requestMetrics(): HasMany
     {
         return $this->hasMany(RequestMetric::class);
@@ -104,6 +110,14 @@ class App extends Model
             array_filter($this->sqlite_databases ?? [], fn ($db) => ! empty($db['backup_enabled'])),
             'path',
         );
+    }
+
+    /**
+     * Resolve the effective storage endpoint: app-level override or team default.
+     */
+    public function effectiveStorageEndpoint(): ?StorageEndpoint
+    {
+        return $this->storageEndpoint ?? $this->team->defaultStorageEndpoint();
     }
 
     public function url(): string

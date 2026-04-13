@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AppLayout from '@/layouts/app-layout';
-import { type App, type BreadcrumbItem } from '@/types';
+import { type App, type BreadcrumbItem, type StorageEndpoint } from '@/types';
 import { Head, router } from '@inertiajs/react';
 import { toast } from 'sonner';
 import { Database, ExternalLink, Pencil, RefreshCw, Terminal as TerminalIcon } from 'lucide-react';
@@ -57,7 +57,7 @@ function TabFallback() {
     );
 }
 
-export default function AppsShow({ app, serverIp }: { app: App; serverIp: string }) {
+export default function AppsShow({ app, serverIp, storageEndpoints = [] }: { app: App; serverIp: string; storageEndpoints?: StorageEndpoint[] }) {
     const breadcrumbs: BreadcrumbItem[] = [
         { title: 'Dashboard', href: '/dashboard' },
         { title: 'Apps', href: '/apps' },
@@ -294,7 +294,7 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
 
                     <TabsContent value="database" className="mt-4">
                         <Suspense fallback={<TabFallback />}>
-                            <DatabaseTab app={app} />
+                            <DatabaseTab app={app} storageEndpoints={storageEndpoints} />
                         </Suspense>
                     </TabsContent>
 

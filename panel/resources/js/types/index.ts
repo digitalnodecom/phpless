@@ -72,6 +72,7 @@ export interface Team {
     plan: string;
     created_at: string;
     updated_at: string;
+    storage_endpoints?: StorageEndpoint[];
 }
 
 export interface App {
@@ -104,6 +105,7 @@ export interface App {
     ip_allowlist: string[] | null;
     cron_enabled: boolean;
     cron_schedule: { schedule: string; command: string }[] | null;
+    storage_endpoint_id: number | null;
     disk_used: number | null;
     disk_total: number | null;
     mem_used: number | null;
@@ -236,6 +238,20 @@ export interface TeamMember {
     email: string;
     role: string;
     is_owner: boolean;
+}
+
+export interface StorageEndpoint {
+    id: number;
+    name: string;
+    provider: string;
+    endpoint_url: string | null;
+    bucket: string;
+    region: string;
+    access_key_id: string;
+    masked_secret: string;
+    path_prefix: string | null;
+    is_default: boolean;
+    created_at: string;
 }
 
 export interface TeamInvitation {

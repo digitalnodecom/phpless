@@ -5,7 +5,7 @@ import { Separator } from '@/components/ui/separator';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import AppLayout from '@/layouts/app-layout';
 import SettingsLayout from '@/layouts/settings/layout';
-import { type Invoice, type Subscription } from '@/types';
+import { type BreadcrumbItem, type Invoice, type Subscription } from '@/types';
 import { Head, router, usePage } from '@inertiajs/react';
 import { CreditCard, ExternalLink, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -70,12 +70,17 @@ function formatPrice(cents: number): string {
     return `$${(cents / 100).toFixed(0)}/mo`;
 }
 
+const breadcrumbs: BreadcrumbItem[] = [
+    { title: 'Team Settings', href: '/settings/team' },
+    { title: 'Billing', href: '/settings/team/billing' },
+];
+
 export default function Billing({ subscription, payment_method, invoices, plan, app_count, available_plans }: Props) {
     const { props } = usePage<{ flash?: { checkout?: string } }>();
     const [usage, setUsage] = useState<UsageData | null>(null);
 
     useEffect(() => {
-        fetch('/settings/billing/usage')
+        fetch('/settings/team/billing/usage')
             .then((r) => r.json())
             .then(setUsage)
             .catch(() => {});
@@ -84,17 +89,17 @@ export default function Billing({ subscription, payment_method, invoices, plan, 
     const isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
 
     function handleSubscribe() {
-        router.post('/settings/billing/checkout');
+        router.post('/settings/team/billing/checkout');
     }
 
     function handlePortal() {
-        router.post('/settings/billing/portal');
+        router.post('/settings/team/billing/portal');
     }
 
     const appUsagePct = Math.round((app_count / plan.app_limit) * 100);
 
     return (
-        <AppLayout>
+        <AppLayout breadcrumbs={breadcrumbs}>
             <Head title="Billing" />
             <SettingsLayout>
                 <div className="space-y-6">

@@ -12,9 +12,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import { type App, type SqliteDatabase } from '@/types';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { type App, type SqliteDatabase, type StorageEndpoint } from '@/types';
 import { router } from '@inertiajs/react';
-import { Database, Download, RotateCcw, Shield } from 'lucide-react';
+import { Cloud, Database, Download, HardDrive, RotateCcw, Shield } from 'lucide-react';
 import { useState } from 'react';
 
 function getCookie(name: string): string {
@@ -24,7 +25,7 @@ function getCookie(name: string): string {
     return '';
 }
 
-export default function DatabaseTab({ app }: { app: App }) {
+export default function DatabaseTab({ app, storageEndpoints = [] }: { app: App; storageEndpoints?: StorageEndpoint[] }) {
     const [databases, setDatabases] = useState<SqliteDatabase[]>(app.sqlite_databases ?? []);
     const [saving, setSaving] = useState(false);
     const [dirty, setDirty] = useState(false);
@@ -34,6 +35,35 @@ export default function DatabaseTab({ app }: { app: App }) {
     const [scanning, setScanning] = useState(false);
     const [manualPath, setManualPath] = useState('');
     const [showManualAdd, setShowManualAdd] = useState(false);
+    const [savingEndpoint, setSavingEndpoint] = useState(false);
+
+    const hasBackups = databases.some((db) => db.backup_enabled);
+    const activeEndpoint = storageEndpoints.find((ep) => ep.id === app.storage_endpoint_id);
+    const defaultEndpoint = storageEndpoints.find((ep) => ep.is_default);
+    const effectiveEndpoint = activeEndpoint ?? defaultEndpoint;
+
+    const handleStorageEndpointChange = async (value: string) => {
+        setSavingEndpoint(true);
+        const endpointId = value === 'none' ? null : value === 'team-default' ? null : parseInt(value);
+        try {
+            const res = await fetch(`/apps/${app.id}/storage-endpoint`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') },
+                body: JSON.stringify({ storage_endpoint_id: endpointId }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setMessage({ text: data.message || 'Storage endpoint updated. Redeploy to apply.', type: 'success' });
+                router.reload({ only: ['app'] });
+            } else {
+                setMessage({ text: data.message || 'Failed to update.', type: 'error' });
+            }
+        } catch {
+            setMessage({ text: 'Failed to update storage endpoint.', type: 'error' });
+        } finally {
+            setSavingEndpoint(false);
+        }
+    };
 
     const handleScanVm = async () => {
         setScanning(true);
@@ -214,6 +244,61 @@ export default function DatabaseTab({ app }: { app: App }) {
                 )}
             </div>
 
+            {hasBackups && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                            {effectiveEndpoint ? <Cloud className="h-4 w-4" /> : <HardDrive className="h-4 w-4" />}
+                            Backup Destination
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        <div className="flex items-center gap-3">
+                            <div className="flex-1">
+                                {effectiveEndpoint ? (
+                                    <p className="text-sm">
+                                        <span className="font-medium">{effectiveEndpoint.name}</span>
+                                        <span className="text-muted-foreground"> — {effectiveEndpoint.bucket} ({effectiveEndpoint.provider})</span>
+                                        {!activeEndpoint && defaultEndpoint && (
+                                            <Badge variant="secondary" className="ml-2">Team Default</Badge>
+                                        )}
+                                    </p>
+                                ) : (
+                                    <p className="text-muted-foreground text-sm">
+                                        Local only — no S3 storage endpoint configured. Backups are stored inside the VM only.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                        {storageEndpoints.length > 0 && (
+                            <div className="flex items-center gap-2">
+                                <Select
+                                    value={app.storage_endpoint_id ? String(app.storage_endpoint_id) : 'team-default'}
+                                    onValueChange={handleStorageEndpointChange}
+                                    disabled={savingEndpoint}
+                                >
+                                    <SelectTrigger className="w-64">
+                                        <SelectValue placeholder="Select storage endpoint" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="team-default">
+                                            Team Default{defaultEndpoint ? ` (${defaultEndpoint.name})` : ' (None)'}
+                                        </SelectItem>
+                                        {storageEndpoints.map((ep) => (
+                                            <SelectItem key={ep.id} value={String(ep.id)}>
+                                                {ep.name} — {ep.bucket}
+                                            </SelectItem>
+                                        ))}
+                                        <SelectItem value="none">None (Local only)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-muted-foreground text-xs">Redeploy after changing to apply.</p>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
+
             {databases.map((db, index) => (
                 <Card key={db.path}>
                     <CardHeader className="flex flex-row items-start justify-between">
@@ -268,7 +353,8 @@ export default function DatabaseTab({ app }: { app: App }) {
                             <div className="flex items-center gap-2 rounded-lg border border-purple-500/20 bg-purple-500/5 p-3">
                                 <Shield className="h-4 w-4 shrink-0 text-purple-500" />
                                 <p className="text-muted-foreground flex-1 text-xs">
-                                    Continuous replication is active. Backups are streamed in real-time.
+                                    Continuous replication is active. Backups are streamed in real-time
+                                    {effectiveEndpoint ? ` to ${effectiveEndpoint.name} (S3) + local.` : ' to local storage.'}
                                 </p>
                                 <Button variant="outline" size="sm" onClick={() => handleDownloadBackup(db.path)}>
                                     <Download className="mr-1.5 h-3.5 w-3.5" />
