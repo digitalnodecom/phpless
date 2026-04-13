@@ -51,13 +51,16 @@ function stateVariant(state: string) {
     }
 }
 
-export default function AppsIndex({ apps }: { apps: App[] }) {
+export default function AppsIndex({ apps, plan, planLabel }: { apps: App[]; plan: string; planLabel: string }) {
     return (
         <AppLayout breadcrumbs={breadcrumbs}>
             <Head title="Apps" />
             <div className="flex h-full flex-1 flex-col gap-4 p-4">
                 <div className="flex items-center justify-between">
-                    <h1 className="text-2xl font-bold">Apps</h1>
+                    <div className="flex items-center gap-2">
+                        <h1 className="text-2xl font-bold">Apps</h1>
+                        {plan === 'sandbox' && <Badge variant="secondary">Sandbox</Badge>}
+                    </div>
                     <Button asChild>
                         <Link href="/apps/create">
                             <Plus className="mr-2 h-4 w-4" />

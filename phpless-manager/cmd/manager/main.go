@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/phpless/phpless-manager/internal/api"
+	"github.com/phpless/phpless-manager/internal/logs"
 	"github.com/phpless/phpless-manager/internal/network"
 	"github.com/phpless/phpless-manager/internal/sshproxy"
 	"github.com/phpless/phpless-manager/internal/terminal"
@@ -36,6 +37,7 @@ func main() {
 	termAddr := flag.String("term-addr", "127.0.0.1:7474", "TCP address for WebSocket terminal server")
 	sshProxyAddr := flag.String("ssh-proxy-addr", "0.0.0.0:7068", "TCP address for SSH proxy server")
 	panelURL := flag.String("panel-url", "https://phpless.digitalno.de", "Panel URL for SSH auth verification")
+	accessLogDir := flag.String("access-log-dir", "/var/log/phpless/apps", "Directory for per-app Caddy access log files")
 	flag.Parse()
 
 	// Configure logging
@@ -60,8 +62,9 @@ func main() {
 	}
 	_ = sshSigner // used below for the TCP terminal server
 
-	// Initialise terminal session store
+	// Initialise terminal and log session stores
 	termStore := terminal.NewStore()
+	logStore := logs.NewStore()
 
 	// Kill any orphaned firecracker processes left over from a previous crash.
 	// On a clean shutdown StopAll() handles this, but SIGKILL leaves them behind.
@@ -110,10 +113,12 @@ func main() {
 
 	// Configure allowed WebSocket origins from the panel URL
 	terminal.SetAllowedOrigins([]string{*panelURL})
+	logs.SetAllowedOrigins([]string{*panelURL})
 
-	// Start WebSocket terminal server on TCP
+	// Start WebSocket terminal + log streaming server on TCP
 	tr := chi.NewRouter()
 	tr.Get("/terminal/{sessionID}", terminal.HandleTerminal(termStore, sshSigner))
+	tr.Get("/logs/{sessionID}", logs.HandleLogStream(logStore, *accessLogDir))
 	go func() {
 		log.WithField("addr", *termAddr).Info("Terminal WebSocket server listening")
 		if err := http.ListenAndServe(*termAddr, tr); err != nil {
@@ -148,7 +153,7 @@ func main() {
 	log.WithField("interface", extIface).Info("Port forwarder initialized")
 
 	// Create API server
-	server := api.NewServer(manager, termStore, sshSigner, portFwd)
+	server := api.NewServer(manager, termStore, logStore, sshSigner, portFwd)
 
 	// Remove old socket if it exists
 	os.Remove(*socketPath)

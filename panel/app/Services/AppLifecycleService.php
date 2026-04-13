@@ -16,13 +16,15 @@ class AppLifecycleService
 
     public function createApp(Team $team, array $data): App
     {
+        $this->enforcePlanLimits($team, $data);
+
         $slug = $data['slug'] ?? Str::slug($data['name']);
 
         $app = $team->apps()->create([
             'name' => $data['name'],
             'slug' => $slug,
-            'vcpus' => $data['vcpus'] ?? 1,
-            'mem_mib' => $data['mem_mib'] ?? 256,
+            'vcpus' => $data['vcpus'] ?? min(1, $team->maxVcpus()),
+            'mem_mib' => $data['mem_mib'] ?? min(256, $team->maxMemMib()),
         ]);
         $app->forceFill(['vm_state' => 'creating'])->save();
 
@@ -50,6 +52,41 @@ class AppLifecycleService
         }
 
         return $app->fresh();
+    }
+
+    public function enforcePlanLimits(Team $team, array $data, ?App $existingApp = null): void
+    {
+        // Check app count limit (only for new apps)
+        if (! $existingApp) {
+            $currentCount = $team->apps()->count();
+            $limit = $team->appLimit();
+            if ($currentCount >= $limit) {
+                $planLabel = $team->planConfig()['label'];
+                throw new \RuntimeException(
+                    "Your {$planLabel} plan allows {$limit} " . ($limit === 1 ? 'app' : 'apps') . ". Upgrade to create more."
+                );
+            }
+        }
+
+        // Check memory limit
+        $memMib = (int) ($data['mem_mib'] ?? $existingApp?->mem_mib ?? 256);
+        $maxMem = $team->maxMemMib();
+        if ($memMib > $maxMem) {
+            $planLabel = $team->planConfig()['label'];
+            throw new \RuntimeException(
+                "Your {$planLabel} plan allows up to {$maxMem} MB of memory. Upgrade for more resources."
+            );
+        }
+
+        // Check vCPU limit
+        $vcpus = (int) ($data['vcpus'] ?? $existingApp?->vcpus ?? 1);
+        $maxVcpus = $team->maxVcpus();
+        if ($vcpus > $maxVcpus) {
+            $planLabel = $team->planConfig()['label'];
+            throw new \RuntimeException(
+                "Your {$planLabel} plan allows up to {$maxVcpus} " . ($maxVcpus === 1 ? 'vCPU' : 'vCPUs') . ". Upgrade for more resources."
+            );
+        }
     }
 
     public function deleteApp(App $app): void

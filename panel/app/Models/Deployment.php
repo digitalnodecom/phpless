@@ -2,11 +2,17 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\File;
 
 class Deployment extends Model
 {
+    protected $appends = ['has_build'];
+
+    protected $hidden = ['build_path'];
+
     protected $fillable = [
         'app_id',
         'triggered_by',
@@ -17,6 +23,8 @@ class Deployment extends Model
         'status',
         'log',
         'build_output',
+        'build_path',
+        'rollback_of',
         'source',
         'started_at',
         'completed_at',
@@ -38,5 +46,15 @@ class Deployment extends Model
     public function triggeredBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'triggered_by');
+    }
+
+    public function originalDeployment(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'rollback_of');
+    }
+
+    protected function hasBuild(): Attribute
+    {
+        return Attribute::get(fn () => $this->build_path && File::isDirectory($this->build_path));
     }
 }

@@ -22,7 +22,7 @@ class DomainController extends Controller
 
     public function store(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'domain' => [

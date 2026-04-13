@@ -32,7 +32,7 @@ class EnvironmentVariableController extends Controller
 
     public function store(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'key' => ['required', 'string', 'max:255', 'regex:/^[A-Z_][A-Z0-9_]*$/'],
@@ -64,7 +64,7 @@ class EnvironmentVariableController extends Controller
 
     public function update(Request $request, App $app, EnvironmentVariable $envVar): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         if ($envVar->app_id !== $app->id) {
             abort(404);
@@ -82,7 +82,7 @@ class EnvironmentVariableController extends Controller
 
     public function destroy(App $app, EnvironmentVariable $envVar): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         if ($envVar->app_id !== $app->id) {
             abort(404);

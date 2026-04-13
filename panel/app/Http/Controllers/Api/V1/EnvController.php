@@ -40,7 +40,7 @@ class EnvController extends Controller
      */
     public function set(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'vars' => ['required', 'array'],
@@ -70,7 +70,7 @@ class EnvController extends Controller
      */
     public function destroy(App $app, string $key): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $var = EnvironmentVariable::forApp($app->id)->where('key', $key)->first();
 

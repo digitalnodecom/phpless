@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/phpless/phpless-manager/internal/deploy"
+	"github.com/phpless/phpless-manager/internal/logs"
 	"github.com/phpless/phpless-manager/internal/network"
 	"github.com/phpless/phpless-manager/internal/terminal"
 	"github.com/phpless/phpless-manager/internal/vm"
@@ -28,16 +29,18 @@ import (
 type Server struct {
 	manager      *vm.Manager
 	termSessions *terminal.Store
+	logSessions  *logs.Store
 	sshSigner    ssh.Signer
 	portFwd      *network.PortForwarder
 	authSecret   string
 }
 
 // NewServer creates a new API server.
-func NewServer(manager *vm.Manager, termSessions *terminal.Store, sshSigner ssh.Signer, portFwd *network.PortForwarder) *Server {
+func NewServer(manager *vm.Manager, termSessions *terminal.Store, logSessions *logs.Store, sshSigner ssh.Signer, portFwd *network.PortForwarder) *Server {
 	return &Server{
 		manager:      manager,
 		termSessions: termSessions,
+		logSessions:  logSessions,
 		sshSigner:    sshSigner,
 		portFwd:      portFwd,
 		authSecret:   os.Getenv("PHPLESS_MANAGER_SECRET"),
@@ -80,6 +83,7 @@ func (s *Server) Router() *chi.Mux {
 		r.Get("/health", s.health)
 		r.Get("/host-stats", s.hostStats)
 		r.Post("/terminal-sessions", s.createTerminalSession)
+		r.Post("/log-sessions", s.createLogSession)
 		r.Get("/workers/status", s.proxyWorkerStatus)
 		r.Get("/workers/logs/*", s.proxyWorkerLogs)
 		r.Post("/port-mappings", s.applyPortMappings)
@@ -542,6 +546,19 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := s.termSessions.Create(req.VmIP, 60*time.Second)
+	respondJSON(w, http.StatusOK, map[string]string{"session_id": sessionID})
+}
+
+func (s *Server) createLogSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Slug == "" {
+		httpError(w, http.StatusBadRequest, "slug is required")
+		return
+	}
+
+	sessionID := s.logSessions.Create(req.Slug, 60*time.Second)
 	respondJSON(w, http.StatusOK, map[string]string{"session_id": sessionID})
 }
 

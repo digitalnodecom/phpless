@@ -155,6 +155,8 @@ export interface Deployment {
     log: string | null;
     build_output: string | null;
     source: string | null;
+    rollback_of: number | null;
+    has_build: boolean;
     started_at: string | null;
     completed_at: string | null;
     created_at: string;

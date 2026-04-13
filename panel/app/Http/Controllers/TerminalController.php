@@ -11,7 +11,7 @@ class TerminalController extends Controller
 {
     public function store(App $app, VMManagerClient $vmManager): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('ssh', $app);
 
         if (!$app->vm_ip || $app->vm_state !== 'running') {
             return response()->json(['message' => 'App is not running.'], 422);

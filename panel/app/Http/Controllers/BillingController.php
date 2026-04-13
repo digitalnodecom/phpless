@@ -30,6 +30,9 @@ class BillingController extends Controller
             }
         }
 
+        $planConfig = $team->planConfig();
+        $appCount = $team->apps()->count();
+
         return Inertia::render('settings/billing', [
             'subscription' => $subscription ? [
                 'status' => $subscription->stripe_status,
@@ -41,6 +44,17 @@ class BillingController extends Controller
                 'last_four' => $team->pm_last_four,
             ],
             'invoices' => $invoices,
+            'plan' => [
+                'name' => $team->plan,
+                'label' => $planConfig['label'],
+                'app_limit' => $team->appLimit(),
+                'max_mem_mib' => $team->maxMemMib(),
+                'max_vcpus' => $team->maxVcpus(),
+                'custom_domains' => $team->allowsCustomDomains(),
+                'price' => $planConfig['price'],
+            ],
+            'app_count' => $appCount,
+            'available_plans' => config('phpless.plans'),
         ]);
     }
 

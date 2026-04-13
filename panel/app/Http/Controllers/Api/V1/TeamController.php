@@ -18,13 +18,21 @@ class TeamController extends Controller
     {
         $team = $request->user()->currentTeam;
 
+        $planConfig = $team->planConfig();
+
         return response()->json([
             'team' => [
                 'id' => $team->id,
                 'name' => $team->name,
                 'slug' => $team->slug,
                 'plan' => $team->plan,
+                'plan_label' => $planConfig['label'],
                 'app_count' => $team->apps()->count(),
+                'app_limit' => $team->appLimit(),
+                'max_mem_mib' => $team->maxMemMib(),
+                'max_vcpus' => $team->maxVcpus(),
+                'custom_domains' => $team->allowsCustomDomains(),
+                'your_role' => $request->user()->roleInTeam($team),
                 'created_at' => $team->created_at,
             ],
         ]);
@@ -63,8 +71,8 @@ class TeamController extends Controller
     {
         $team = $request->user()->currentTeam;
 
-        if ($team->owner_id !== $request->user()->id) {
-            return response()->json(['message' => 'Only the team owner can manage team environment variables.'], 403);
+        if (! $request->user()->hasTeamRole($team, ['owner', 'admin'])) {
+            return response()->json(['message' => 'Only team owners and admins can manage team environment variables.'], 403);
         }
 
         $request->validate([
@@ -97,8 +105,8 @@ class TeamController extends Controller
     {
         $team = $request->user()->currentTeam;
 
-        if ($team->owner_id !== $request->user()->id) {
-            return response()->json(['message' => 'Only the team owner can manage team environment variables.'], 403);
+        if (! $request->user()->hasTeamRole($team, ['owner', 'admin'])) {
+            return response()->json(['message' => 'Only team owners and admins can manage team environment variables.'], 403);
         }
 
         $var = EnvironmentVariable::forTeam($team->id)->where('key', $key)->first();

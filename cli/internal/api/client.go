@@ -310,6 +310,68 @@ func (c *Client) Deploy(slug string, tarball io.Reader, filename string) (*Deplo
 	return &deployResp, nil
 }
 
+// Restart triggers a redeploy of existing code (no tarball upload).
+func (c *Client) Restart(slug string) (*DeployResponse, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("source", "cli")
+	writer.Close()
+
+	req, err := http.NewRequest("POST", c.BaseURL+"/apps/"+slug+"/deploy", &buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		if err := json.Unmarshal(respBody, apiErr); err != nil {
+			apiErr.Message = string(respBody)
+		}
+		return nil, apiErr
+	}
+
+	var deployResp DeployResponse
+	if err := json.Unmarshal(respBody, &deployResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &deployResp, nil
+}
+
+// --- Write File ---
+
+type WriteFileResponse struct {
+	Message string `json:"message"`
+	Path    string `json:"path"`
+}
+
+// WriteFile writes content to a file in the app's build directory.
+func (c *Client) WriteFile(slug, path, content string) (*WriteFileResponse, error) {
+	var resp WriteFileResponse
+	err := c.do("POST", "/apps/"+slug+"/files/write", map[string]string{
+		"path":    path,
+		"content": content,
+	}, &resp)
+	return &resp, err
+}
+
 // --- Download ---
 
 // DownloadApp downloads the deployed code for an app as a gzipped tar stream.
@@ -362,6 +424,16 @@ type LogsResponse struct {
 func (c *Client) GetLogs(slug string) (*LogsResponse, error) {
 	var resp LogsResponse
 	err := c.do("GET", "/apps/"+slug+"/logs", nil, &resp)
+	return &resp, err
+}
+
+type LogStreamSessionResponse struct {
+	SessionID string `json:"session_id"`
+}
+
+func (c *Client) CreateLogStreamSession(slug string) (*LogStreamSessionResponse, error) {
+	var resp LogStreamSessionResponse
+	err := c.do("POST", "/apps/"+slug+"/logs/stream", nil, &resp)
 	return &resp, err
 }
 
@@ -512,6 +584,24 @@ func (c *Client) DownloadStorage(slug, path string) (io.ReadCloser, string, erro
 	}
 
 	return resp.Body, filename, nil
+}
+
+// --- Rollback ---
+
+type RollbackResponse struct {
+	Message    string     `json:"message"`
+	Deployment struct {
+		ID     int    `json:"id"`
+		Status string `json:"status"`
+		Source string `json:"source"`
+	} `json:"deployment"`
+	App AppSummary `json:"app"`
+}
+
+func (c *Client) Rollback(slug string, deploymentID int) (*RollbackResponse, error) {
+	var resp RollbackResponse
+	err := c.do("POST", fmt.Sprintf("/apps/%s/rollback/%d", slug, deploymentID), nil, &resp)
+	return &resp, err
 }
 
 // --- Environment Variables ---

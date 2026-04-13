@@ -17,39 +17,53 @@ Route::post('v1/webhooks/github/{app:slug}', [WebhookController::class, 'github'
 
 // Authenticated API routes
 Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(function () {
-    // User
-    Route::get('user', [UserController::class, 'show']);
+    // User & Team — general reads
+    Route::middleware('throttle:api-reads')->group(function () {
+        Route::get('user', [UserController::class, 'show']);
+        Route::get('team', [TeamController::class, 'show']);
+        Route::get('team/env', [TeamController::class, 'envIndex']);
 
-    // Team
-    Route::get('team', [TeamController::class, 'show']);
-    Route::get('team/env', [TeamController::class, 'envIndex']);
-    Route::put('team/env', [TeamController::class, 'envSet']);
-    Route::delete('team/env/{key}', [TeamController::class, 'envDestroy']);
+        // Apps — read endpoints
+        Route::get('apps', [AppController::class, 'index']);
+        Route::get('apps/{app:slug}', [AppController::class, 'show']);
+        Route::get('apps/{app:slug}/download', [AppController::class, 'download']);
+        Route::get('apps/{app:slug}/logs', [AppController::class, 'logs']);
+        Route::get('apps/{app:slug}/files', [AppController::class, 'files']);
+        Route::get('apps/{app:slug}/files/download', [AppController::class, 'filesDownload']);
+        Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);
+    });
 
-    // Apps — {app:slug} resolves App by slug column (CLI-friendly)
-    Route::get('apps', [AppController::class, 'index']);
-    Route::post('apps', [AppController::class, 'store']);
-    Route::get('apps/{app:slug}', [AppController::class, 'show']);
+    // App creation — 5/hour
+    Route::middleware('throttle:api-app-create')->group(function () {
+        Route::post('apps', [AppController::class, 'store']);
+    });
+
+    // Deploy & rollback — 10/hour
+    Route::middleware('throttle:api-deploy')->group(function () {
+        Route::post('apps/{app:slug}/deploy', [AppController::class, 'deploy']);
+        Route::post('apps/{app:slug}/rollback/{deployment}', [AppController::class, 'rollback']);
+        Route::post('apps/{app:slug}/logs/stream', [AppController::class, 'logSession']);
+    });
+
+    // File upload/write — 30/hour
+    Route::middleware('throttle:api-file-write')->group(function () {
+        Route::post('apps/{app:slug}/files/upload', [AppController::class, 'filesUpload']);
+        Route::post('apps/{app:slug}/files/write', [AppController::class, 'filesWrite']);
+        Route::delete('apps/{app:slug}/files', [AppController::class, 'filesDelete']);
+        Route::post('apps/{app:slug}/files/persistent', [AppController::class, 'setPersistent']);
+    });
+
+    // Env var mutations — 30/hour
+    Route::middleware('throttle:api-env-mutate')->group(function () {
+        Route::put('team/env', [TeamController::class, 'envSet']);
+        Route::delete('team/env/{key}', [TeamController::class, 'envDestroy']);
+        Route::put('apps/{app:slug}/env', [EnvController::class, 'set']);
+        Route::delete('apps/{app:slug}/env/{key}', [EnvController::class, 'destroy']);
+    });
+
+    // App delete — general reads limiter (infrequent operation)
     Route::delete('apps/{app:slug}', [AppController::class, 'destroy']);
-
-    // App deploy, download & logs
-    Route::post('apps/{app:slug}/deploy', [AppController::class, 'deploy']);
-    Route::get('apps/{app:slug}/download', [AppController::class, 'download']);
-    Route::get('apps/{app:slug}/logs', [AppController::class, 'logs']);
-
-    // File browser
-    Route::get('apps/{app:slug}/files', [AppController::class, 'files']);
-    Route::post('apps/{app:slug}/files/upload', [AppController::class, 'filesUpload']);
-    Route::post('apps/{app:slug}/files/write', [AppController::class, 'filesWrite']);
-    Route::delete('apps/{app:slug}/files', [AppController::class, 'filesDelete']);
-    Route::get('apps/{app:slug}/files/download', [AppController::class, 'filesDownload']);
-    Route::post('apps/{app:slug}/files/persistent', [AppController::class, 'setPersistent']);
 
     // SSH proxy verification
     Route::post('ssh/verify', [AppController::class, 'sshVerify']);
-
-    // App env vars
-    Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);
-    Route::put('apps/{app:slug}/env', [EnvController::class, 'set']);
-    Route::delete('apps/{app:slug}/env/{key}', [EnvController::class, 'destroy']);
 });

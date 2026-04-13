@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\EnvironmentVariable;
 use App\Models\Team;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -40,6 +42,17 @@ class TeamController extends Controller
             ])
             : collect();
 
+        $envVars = EnvironmentVariable::forTeam($team->id)
+            ->orderBy('key')
+            ->get()
+            ->map(fn ($v) => [
+                'id' => $v->id,
+                'key' => $v->key,
+                'value' => $v->is_secret ? null : $v->value,
+                'is_secret' => $v->is_secret,
+                'source' => 'team',
+            ]);
+
         return Inertia::render('settings/team', [
             'team' => [
                 'id' => $team->id,
@@ -50,6 +63,8 @@ class TeamController extends Controller
             'members' => $members,
             'pendingInvitations' => $pendingInvitations,
             'isOwner' => $isOwner,
+            'userRole' => $user->roleInTeam($team),
+            'envVars' => $envVars,
         ]);
     }
 
@@ -153,5 +168,31 @@ class TeamController extends Controller
         $user->update(['current_team_id' => $team->id]);
 
         return redirect()->route('dashboard');
+    }
+
+    public function updateRole(Request $request, User $user): JsonResponse
+    {
+        $authUser = $request->user();
+        $team = $authUser->currentTeam;
+
+        if ($team->owner_id !== $authUser->id) {
+            abort(403);
+        }
+
+        if ($user->id === $authUser->id) {
+            return response()->json(['message' => 'You cannot change your own role.'], 422);
+        }
+
+        if (! $team->users()->where('user_id', $user->id)->exists()) {
+            return response()->json(['message' => 'User is not a member of this team.'], 404);
+        }
+
+        $validated = $request->validate([
+            'role' => ['required', 'string', 'in:admin,member,viewer'],
+        ]);
+
+        $team->users()->updateExistingPivot($user->id, ['role' => $validated['role']]);
+
+        return response()->json(['message' => 'Role updated.']);
     }
 }

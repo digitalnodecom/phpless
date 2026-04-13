@@ -43,4 +43,33 @@ class Team extends Model
         return $this->hasMany(TeamInvitation::class);
     }
 
+    public function planConfig(): array
+    {
+        return config('phpless.plans.' . $this->plan, config('phpless.plans.sandbox'));
+    }
+
+    public function appLimit(): int
+    {
+        return $this->planConfig()['app_limit'];
+    }
+
+    public function maxMemMib(): int
+    {
+        return $this->planConfig()['max_mem_mib'];
+    }
+
+    public function maxVcpus(): int
+    {
+        return $this->planConfig()['max_vcpus'];
+    }
+
+    public function allowsCustomDomains(): bool
+    {
+        return $this->planConfig()['custom_domains'] ?? false;
+    }
+
+    public function isSandbox(): bool
+    {
+        return $this->plan === 'sandbox';
+    }
 }

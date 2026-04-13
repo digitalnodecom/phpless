@@ -22,7 +22,7 @@ const mainNavItems: NavItem[] = [
     },
     {
         title: 'Settings',
-        url: '/settings/team/env',
+        url: '/settings/profile',
         icon: Settings,
     },
 ];

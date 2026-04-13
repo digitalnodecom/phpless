@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\GitDeployJob;
 use App\Models\App;
+use App\Models\Deployment;
 use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
 use App\Services\CaddyfileGenerator;
@@ -50,23 +51,41 @@ class AppController extends Controller
             return array_merge($app->toArray(), $stats);
         });
 
+        $team = $request->user()->currentTeam;
+
         return Inertia::render('apps/index', [
             'apps' => $appsWithDisk,
+            'plan' => $team->plan,
+            'planLabel' => $team->planConfig()['label'],
         ]);
     }
 
-    public function create(): Response
+    public function create(Request $request): Response
     {
-        return Inertia::render('apps/create');
+        $team = $request->user()->currentTeam;
+        $planConfig = $team->planConfig();
+
+        return Inertia::render('apps/create', [
+            'plan' => [
+                'name' => $team->plan,
+                'label' => $planConfig['label'],
+                'app_limit' => $team->appLimit(),
+                'max_mem_mib' => $team->maxMemMib(),
+                'max_vcpus' => $team->maxVcpus(),
+            ],
+            'app_count' => $team->apps()->count(),
+        ]);
     }
 
     public function store(Request $request, AppLifecycleService $lifecycle): RedirectResponse
     {
+        Gate::authorize('create', App::class);
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'slug' => ['nullable', 'string', 'max:255', 'alpha_dash', Rule::unique('apps', 'slug')],
             'vcpus' => ['required', 'integer', 'in:1,2'],
-            'mem_mib' => ['required', 'integer', 'in:256,512,1024'],
+            'mem_mib' => ['required', 'integer', 'in:128,256,512,1024'],
         ]);
 
         if (empty($validated['slug'])) {
@@ -113,7 +132,7 @@ class AppController extends Controller
 
     public function rename(Request $request, App $app, CaddyConfigManager $caddy): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255'],
@@ -249,7 +268,7 @@ class AppController extends Controller
 
     public function filesUpload(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'file' => ['required', 'file', 'max:1048576'],
@@ -271,7 +290,7 @@ class AppController extends Controller
 
     public function filesWrite(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'path'    => ['required', 'string', 'max:500'],
@@ -290,7 +309,7 @@ class AppController extends Controller
 
     public function filesDelete(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'path' => ['required', 'string', 'max:500'],
@@ -332,7 +351,7 @@ class AppController extends Controller
 
     public function setPersistent(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'path'       => ['required', 'string', 'max:500'],
@@ -357,7 +376,7 @@ class AppController extends Controller
 
     public function deploy(App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): RedirectResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('deploy', $app);
 
         if (! $app->vm_id) {
             return back()->withErrors(['deploy' => 'App has no VM assigned.']);
@@ -424,6 +443,7 @@ class AppController extends Controller
                     'commit_message' => 'In-browser deploy',
                     'source' => 'web',
                     'build_output' => $buildOutput,
+                    'build_path' => $buildDir,
                     'log' => 'Build command failed.',
                     'started_at' => now(),
                     'completed_at' => now(),
@@ -440,12 +460,16 @@ class AppController extends Controller
                 try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings, $app->ip_allowlist ?? []); } catch (\Throwable) {}
             }
 
+            // Snapshot build into versioned directory
+            $versionedPath = $this->snapshotBuild($app, $buildDir);
+
             $app->deployments()->create([
                 'triggered_by' => auth()->id(),
                 'status' => 'succeeded',
                 'commit_message' => 'In-browser deploy',
                 'source' => 'web',
                 'build_output' => $buildOutput,
+                'build_path' => $versionedPath,
                 'started_at' => now(),
                 'completed_at' => now(),
             ]);
@@ -456,9 +480,152 @@ class AppController extends Controller
         }
     }
 
-    public function updateSettings(Request $request, App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): JsonResponse
+    public function rollback(Request $request, App $app, Deployment $deployment, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('deploy', $app);
+
+        if ($deployment->app_id !== $app->id) {
+            return response()->json(['message' => 'Deployment does not belong to this app.'], 422);
+        }
+
+        if ($deployment->status !== 'succeeded') {
+            return response()->json(['message' => 'Can only rollback to a successful deployment.'], 422);
+        }
+
+        if (! $app->vm_id) {
+            return response()->json(['message' => 'App has no VM assigned.'], 422);
+        }
+
+        $buildDir = $deployment->build_path;
+
+        if (! $buildDir || ! File::isDirectory($buildDir)) {
+            $buildDir = base_path("../builds/{$app->slug}");
+        }
+
+        if (! File::isDirectory($buildDir) || count(File::allFiles($buildDir)) === 0) {
+            return response()->json(['message' => 'Build directory for this deployment no longer exists.'], 422);
+        }
+
+        try {
+            $envContent = $envService->generateEnvContent($app);
+            $caddyContent = (new CaddyfileGenerator)->generate($app);
+            $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
+
+            $newVmId = $result['vm_id'] ?? $app->vm_id;
+            try {
+                $vm = $vmManager->waitForRunning($newVmId, 15);
+                $app->forceFill([
+                    'vm_id' => $newVmId,
+                    'vm_state' => $vm['state'] ?? 'running',
+                    'vm_ip' => $vm['ip'] ?? $app->vm_ip,
+                ])->save();
+            } catch (\Throwable) {
+                $app->forceFill(['vm_id' => $newVmId])->save();
+            }
+            $app->refresh();
+
+            $buildOutput = null;
+            $buildFailed = false;
+
+            if ($app->build_command && $app->vm_ip) {
+                try {
+                    $buildResult = $vmManager->execBuildCommand($app->vm_ip, $app->build_command, 120);
+                    $buildOutput = $buildResult['output'];
+                    if ($buildResult['exit_code'] !== 0) {
+                        $buildFailed = true;
+                    }
+                } catch (\Throwable $e) {
+                    $buildOutput = $e->getMessage();
+                    $buildFailed = true;
+                }
+            }
+
+            if ($buildFailed) {
+                $app->deployments()->create([
+                    'triggered_by' => auth()->id(),
+                    'status' => 'failed',
+                    'source' => 'rollback',
+                    'rollback_of' => $deployment->id,
+                    'commit_message' => "Rollback to deployment #{$deployment->id}",
+                    'build_output' => $buildOutput,
+                    'build_path' => $buildDir,
+                    'log' => 'Build command failed during rollback.',
+                    'started_at' => now(),
+                    'completed_at' => now(),
+                ]);
+
+                return response()->json(['message' => 'Build command failed during rollback.'], 422);
+            }
+
+            $caddy->regenerateAndReload();
+
+            if (! empty($app->port_mappings) && $app->vm_ip) {
+                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings, $app->ip_allowlist ?? []); } catch (\Throwable) {}
+            }
+
+            $currentBuildDir = base_path("../builds/{$app->slug}");
+            if ($buildDir !== $currentBuildDir) {
+                if (File::exists($currentBuildDir)) {
+                    File::deleteDirectory($currentBuildDir);
+                }
+                File::copyDirectory($buildDir, $currentBuildDir);
+            }
+
+            $app->deployments()->create([
+                'triggered_by' => auth()->id(),
+                'status' => 'succeeded',
+                'source' => 'rollback',
+                'rollback_of' => $deployment->id,
+                'commit_sha' => $deployment->commit_sha,
+                'commit_message' => "Rollback to deployment #{$deployment->id}",
+                'commit_author' => $deployment->commit_author,
+                'branch' => $deployment->branch,
+                'build_output' => $buildOutput,
+                'build_path' => $buildDir,
+                'started_at' => now(),
+                'completed_at' => now(),
+            ]);
+
+            return response()->json(['message' => "Rolled back to deployment #{$deployment->id}."]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Copy the current build into a versioned snapshot directory and prune old snapshots.
+     */
+    private function snapshotBuild(App $app, string $buildDir): string
+    {
+        $versionsBase = base_path("../builds/{$app->slug}/versions");
+        File::ensureDirectoryExists($versionsBase);
+
+        $timestamp = now()->format('Ymd_His');
+        $versionedPath = $versionsBase . '/' . $timestamp;
+
+        File::ensureDirectoryExists($versionedPath);
+        $exitCode = 0;
+        exec(
+            'rsync -a --exclude=versions ' . escapeshellarg($buildDir . '/') . ' ' . escapeshellarg($versionedPath . '/') . ' 2>&1',
+            $output,
+            $exitCode,
+        );
+
+        // Prune old snapshots — keep the 5 most recent
+        $dirs = collect(File::directories($versionsBase))->sort()->values();
+        if ($dirs->count() > 5) {
+            foreach ($dirs->slice(0, $dirs->count() - 5) as $old) {
+                File::deleteDirectory($old);
+            }
+        }
+
+        return $versionedPath;
+    }
+
+    public function updateSettings(Request $request, App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService, AppLifecycleService $lifecycle): JsonResponse
+    {
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'worker_mode' => 'boolean',
@@ -466,11 +633,17 @@ class AppController extends Controller
             'worker_count' => 'integer|min:1|max:16',
             'mercure_enabled' => 'boolean',
             'vcpus' => 'nullable|integer|in:1,2',
-            'mem_mib' => 'nullable|integer|in:256,512,1024',
+            'mem_mib' => 'nullable|integer|in:128,256,512,1024',
             'web_root' => 'nullable|string|max:100',
             'build_command' => 'nullable|string|max:1000',
             'cron_enabled' => 'boolean',
         ]);
+
+        try {
+            $lifecycle->enforcePlanLimits($request->user()->currentTeam, $validated, $app);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         $needsVMResize = $app->vm_id && (
             (isset($validated['vcpus']) && (int) $validated['vcpus'] !== (int) $app->vcpus) ||
@@ -522,7 +695,7 @@ class AppController extends Controller
 
     public function updateIpAllowlist(Request $request, App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'ip_allowlist' => ['present', 'array'],
@@ -555,7 +728,7 @@ class AppController extends Controller
 
     public function updatePortMappings(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'port_mappings' => ['present', 'array'],
@@ -611,7 +784,7 @@ class AppController extends Controller
 
     public function updateWorkers(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'workers' => ['present', 'array'],
@@ -666,7 +839,7 @@ class AppController extends Controller
 
     public function generateMercureKeys(App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $publisherKey = Str::random(64);
         $subscriberKey = Str::random(64);
@@ -755,9 +928,22 @@ class AppController extends Controller
         return response()->json(['logs' => $lines, 'console_logs' => $consoleLogs]);
     }
 
-    public function githubConnect(Request $request, App $app): JsonResponse
+    public function logSession(App $app, VMManagerClient $vmManager): JsonResponse
     {
         Gate::authorize('view', $app);
+
+        try {
+            $sessionId = $vmManager->createLogSession($app->slug);
+        } catch (\Throwable) {
+            return response()->json(['message' => 'Could not create log session.'], 500);
+        }
+
+        return response()->json(['session_id' => $sessionId]);
+    }
+
+    public function githubConnect(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('update', $app);
 
         $validated = $request->validate([
             'github_repo' => ['required', 'string', 'max:255'],
@@ -782,7 +968,7 @@ class AppController extends Controller
 
     public function githubDisconnect(App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $app->fill([
             'github_repo' => null,
@@ -796,7 +982,7 @@ class AppController extends Controller
 
     public function githubDeploy(App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('deploy', $app);
 
         if (! $app->github_repo) {
             return response()->json(['message' => 'No GitHub repository configured.'], 422);

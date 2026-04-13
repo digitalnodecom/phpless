@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\App;
+use App\Models\Deployment;
 use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
 use App\Services\CaddyfileGenerator;
@@ -43,11 +44,13 @@ class AppController extends Controller
      */
     public function store(Request $request, AppLifecycleService $lifecycle): JsonResponse
     {
+        Gate::authorize('create', App::class);
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'slug' => ['nullable', 'string', 'max:255', 'alpha_dash', Rule::unique('apps', 'slug')],
             'vcpus' => ['sometimes', 'integer', 'in:1,2'],
-            'mem_mib' => ['sometimes', 'integer', 'in:256,512,1024'],
+            'mem_mib' => ['sometimes', 'integer', 'in:128,256,512,1024'],
             'github_repo' => ['sometimes', 'nullable', 'string', 'max:255'],
             'github_branch' => ['sometimes', 'string', 'max:255'],
             'build_command' => ['sometimes', 'nullable', 'string', 'max:1000'],
@@ -120,7 +123,7 @@ class AppController extends Controller
      */
     public function deploy(Request $request, App $app, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): JsonResponse
     {
-        Gate::authorize('update', $app);
+        Gate::authorize('deploy', $app);
 
         if (! $app->vm_id) {
             return response()->json(['message' => 'App has no VM assigned.'], 422);
@@ -212,6 +215,7 @@ class AppController extends Controller
                     'commit_message' => 'API deploy',
                     'source' => $request->input('source', 'api'),
                     'build_output' => $buildOutput,
+                    'build_path' => $buildDir,
                     'log' => 'Build command failed.',
                     'started_at' => now(),
                     'completed_at' => now(),
@@ -226,18 +230,147 @@ class AppController extends Controller
                 try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings, $app->ip_allowlist ?? []); } catch (\Throwable) {}
             }
 
+            // Snapshot build into versioned directory
+            $versionedPath = $this->snapshotBuild($app, $buildDir);
+
             $app->deployments()->create([
                 'triggered_by' => $request->user()->id,
                 'status' => 'succeeded',
                 'commit_message' => 'API deploy',
                 'source' => $request->input('source', 'api'),
                 'build_output' => $buildOutput,
+                'build_path' => $versionedPath,
                 'started_at' => now(),
                 'completed_at' => now(),
             ]);
 
             return response()->json([
                 'message' => 'Deployed successfully.',
+                'app' => $this->formatApp($app->fresh()),
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Rollback to a previous deployment
+     *
+     * Re-deploy a previous build to the app's VM. Creates a new deployment record with source 'rollback'.
+     * The target deployment must belong to this app and its build directory must still exist.
+     */
+    public function rollback(Request $request, App $app, Deployment $deployment, VMManagerClient $vmManager, CaddyConfigManager $caddy, EnvironmentVariableService $envService): JsonResponse
+    {
+        Gate::authorize('deploy', $app);
+
+        if ($deployment->app_id !== $app->id) {
+            return response()->json(['message' => 'Deployment does not belong to this app.'], 422);
+        }
+
+        if ($deployment->status !== 'succeeded') {
+            return response()->json(['message' => 'Can only rollback to a successful deployment.'], 422);
+        }
+
+        if (! $app->vm_id) {
+            return response()->json(['message' => 'App has no VM assigned.'], 422);
+        }
+
+        // Determine the build directory for the target deployment
+        $buildDir = $deployment->build_path;
+
+        if (! $buildDir || ! File::isDirectory($buildDir)) {
+            $buildDir = base_path("../builds/{$app->slug}");
+        }
+
+        if (! File::isDirectory($buildDir) || count(File::allFiles($buildDir)) === 0) {
+            return response()->json(['message' => 'Build directory for this deployment no longer exists.'], 422);
+        }
+
+        try {
+            $envContent = $envService->generateEnvContent($app);
+            $caddyContent = (new CaddyfileGenerator)->generate($app);
+            $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
+
+            $newVmId = $result['vm_id'] ?? $app->vm_id;
+            try {
+                $vm = $vmManager->waitForRunning($newVmId, 15);
+                $app->forceFill([
+                    'vm_id' => $newVmId,
+                    'vm_state' => $vm['state'] ?? 'running',
+                    'vm_ip' => $vm['ip'] ?? $app->vm_ip,
+                ])->save();
+            } catch (\Throwable) {
+                $app->forceFill(['vm_id' => $newVmId])->save();
+            }
+            $app->refresh();
+
+            $buildOutput = null;
+            $buildFailed = false;
+
+            if ($app->build_command && $app->vm_ip) {
+                try {
+                    $buildResult = $vmManager->execBuildCommand($app->vm_ip, $app->build_command, 120);
+                    $buildOutput = $buildResult['output'];
+                    if ($buildResult['exit_code'] !== 0) {
+                        $buildFailed = true;
+                    }
+                } catch (\Throwable $e) {
+                    $buildOutput = $e->getMessage();
+                    $buildFailed = true;
+                }
+            }
+
+            if ($buildFailed) {
+                $app->deployments()->create([
+                    'triggered_by' => $request->user()->id,
+                    'status' => 'failed',
+                    'source' => 'rollback',
+                    'rollback_of' => $deployment->id,
+                    'commit_message' => "Rollback to deployment #{$deployment->id}",
+                    'build_output' => $buildOutput,
+                    'build_path' => $buildDir,
+                    'log' => 'Build command failed during rollback.',
+                    'started_at' => now(),
+                    'completed_at' => now(),
+                ]);
+
+                return response()->json(['message' => 'Build command failed during rollback.', 'build_output' => $buildOutput], 422);
+            }
+
+            $caddy->regenerateAndReload();
+
+            if (! empty($app->port_mappings) && $app->vm_ip) {
+                try { $vmManager->applyPortMappings($app->vm_ip, $app->port_mappings, $app->ip_allowlist ?? []); } catch (\Throwable) {}
+            }
+
+            // Update the current build dir to point to the rollback build
+            $currentBuildDir = base_path("../builds/{$app->slug}");
+            if ($buildDir !== $currentBuildDir) {
+                if (File::exists($currentBuildDir)) {
+                    File::deleteDirectory($currentBuildDir);
+                }
+                File::copyDirectory($buildDir, $currentBuildDir);
+            }
+
+            $rollbackDeployment = $app->deployments()->create([
+                'triggered_by' => $request->user()->id,
+                'status' => 'succeeded',
+                'source' => 'rollback',
+                'rollback_of' => $deployment->id,
+                'commit_sha' => $deployment->commit_sha,
+                'commit_message' => "Rollback to deployment #{$deployment->id}",
+                'commit_author' => $deployment->commit_author,
+                'branch' => $deployment->branch,
+                'build_output' => $buildOutput,
+                'build_path' => $buildDir,
+                'started_at' => now(),
+                'completed_at' => now(),
+            ]);
+
+            return response()->json([
+                'message' => "Rolled back to deployment #{$deployment->id}.",
+                'deployment' => $rollbackDeployment,
                 'app' => $this->formatApp($app->fresh()),
             ]);
         } catch (\RuntimeException $e) {
@@ -324,6 +457,21 @@ class AppController extends Controller
     }
 
     /**
+     * Create log stream session
+     *
+     * Creates a one-time WebSocket session for streaming real-time access logs.
+     * Connect to `wss://{host}/ws/logs/{session_id}` within 60 seconds.
+     */
+    public function logSession(App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $sessionId = $vmManager->createLogSession($app->slug);
+
+        return response()->json(['session_id' => $sessionId]);
+    }
+
+    /**
      * List deployed files
      *
      * Browse the app's deployed file tree. Use the `path` query parameter to navigate subdirectories.
@@ -395,7 +543,7 @@ class AppController extends Controller
      */
     public function filesUpload(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'file' => ['required', 'file', 'max:1048576'],
@@ -429,7 +577,7 @@ class AppController extends Controller
      */
     public function filesWrite(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'path'    => ['required', 'string', 'max:500'],
@@ -460,7 +608,7 @@ class AppController extends Controller
      */
     public function filesDelete(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate(['path' => ['required', 'string', 'max:500']]);
 
@@ -510,7 +658,7 @@ class AppController extends Controller
      */
     public function setPersistent(Request $request, App $app): JsonResponse
     {
-        Gate::authorize('view', $app);
+        Gate::authorize('update', $app);
 
         $request->validate([
             'path'       => ['required', 'string', 'max:500'],
@@ -551,7 +699,7 @@ class AppController extends Controller
             return response()->json(['message' => 'App not found.'], 404);
         }
 
-        Gate::authorize('view', $app);
+        Gate::authorize('ssh', $app);
 
         if (! $app->vm_ip || $app->vm_state !== 'running') {
             return response()->json(['message' => 'App is not running.'], 422);
@@ -597,6 +745,8 @@ class AppController extends Controller
                 'commit_author' => $d->commit_author,
                 'branch' => $d->branch,
                 'build_output' => $d->build_output,
+                'rollback_of' => $d->rollback_of,
+                'has_build' => $d->build_path && File::isDirectory($d->build_path),
                 'created_at' => $d->created_at,
             ]);
             $data['domains'] = $app->domains?->map(fn ($d) => [
@@ -607,5 +757,36 @@ class AppController extends Controller
         }
 
         return $data;
+    }
+
+    /**
+     * Copy the current build into a versioned snapshot directory and prune old snapshots.
+     */
+    private function snapshotBuild(App $app, string $buildDir): string
+    {
+        $versionsBase = base_path("../builds/{$app->slug}/versions");
+        File::ensureDirectoryExists($versionsBase);
+
+        $timestamp = now()->format('Ymd_His');
+        $versionedPath = $versionsBase . '/' . $timestamp;
+
+        // Copy current build (excluding the versions dir itself) into the snapshot
+        File::ensureDirectoryExists($versionedPath);
+        $exitCode = 0;
+        exec(
+            'rsync -a --exclude=versions ' . escapeshellarg($buildDir . '/') . ' ' . escapeshellarg($versionedPath . '/') . ' 2>&1',
+            $output,
+            $exitCode,
+        );
+
+        // Prune old snapshots — keep the 5 most recent
+        $dirs = collect(File::directories($versionsBase))->sort()->values();
+        if ($dirs->count() > 5) {
+            foreach ($dirs->slice(0, $dirs->count() - 5) as $old) {
+                File::deleteDirectory($old);
+            }
+        }
+
+        return $versionedPath;
     }
 }

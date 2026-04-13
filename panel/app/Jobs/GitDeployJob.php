@@ -140,8 +140,12 @@ class GitDeployJob implements ShouldQueue
                 } catch (\Throwable) {}
             }
 
+            // Snapshot build into versioned directory
+            $versionedPath = $this->snapshotBuild($buildDir);
+
             $deployment->update([
                 'status' => 'succeeded',
+                'build_path' => $versionedPath,
                 'completed_at' => now(),
             ]);
         } catch (\Throwable $e) {
@@ -205,6 +209,30 @@ class GitDeployJob implements ShouldQueue
         }
 
         return $repo;
+    }
+
+    private function snapshotBuild(string $buildDir): string
+    {
+        $versionsBase = base_path("../builds/{$this->app->slug}/versions");
+        File::ensureDirectoryExists($versionsBase);
+
+        $timestamp = now()->format('Ymd_His');
+        $versionedPath = $versionsBase . '/' . $timestamp;
+
+        File::ensureDirectoryExists($versionedPath);
+        exec(
+            'rsync -a --exclude=versions ' . escapeshellarg($buildDir . '/') . ' ' . escapeshellarg($versionedPath . '/') . ' 2>&1',
+        );
+
+        // Prune old snapshots — keep the 5 most recent
+        $dirs = collect(File::directories($versionsBase))->sort()->values();
+        if ($dirs->count() > 5) {
+            foreach ($dirs->slice(0, $dirs->count() - 5) as $old) {
+                File::deleteDirectory($old);
+            }
+        }
+
+        return $versionedPath;
     }
 
     private function extractCommitInfo(string $repoDir, Deployment $deployment): void

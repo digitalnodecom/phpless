@@ -18,10 +18,33 @@ interface UsageData {
     estimated_cost: number;
 }
 
+interface PlanInfo {
+    name: string;
+    label: string;
+    app_limit: number;
+    max_mem_mib: number;
+    max_vcpus: number;
+    custom_domains: boolean;
+    price: number;
+}
+
+interface PlanConfig {
+    label: string;
+    app_limit: number;
+    max_mem_mib: number;
+    max_vcpus: number;
+    custom_domains: boolean;
+    price: number;
+    priority_support?: boolean;
+}
+
 interface Props {
     subscription: Subscription | null;
     payment_method: { type: string | null; last_four: string | null };
     invoices: Invoice[];
+    plan: PlanInfo;
+    app_count: number;
+    available_plans: Record<string, PlanConfig>;
 }
 
 function statusBadge(status: string | null) {
@@ -36,7 +59,18 @@ function statusBadge(status: string | null) {
     return <Badge variant={map[status] ?? 'secondary'}>{status}</Badge>;
 }
 
-export default function Billing({ subscription, payment_method, invoices }: Props) {
+function planBadgeVariant(plan: string): 'default' | 'secondary' | 'outline' {
+    if (plan === 'sandbox') return 'secondary';
+    if (plan === 'business') return 'default';
+    return 'outline';
+}
+
+function formatPrice(cents: number): string {
+    if (cents === 0) return 'Free';
+    return `$${(cents / 100).toFixed(0)}/mo`;
+}
+
+export default function Billing({ subscription, payment_method, invoices, plan, app_count, available_plans }: Props) {
     const { props } = usePage<{ flash?: { checkout?: string } }>();
     const [usage, setUsage] = useState<UsageData | null>(null);
 
@@ -57,43 +91,83 @@ export default function Billing({ subscription, payment_method, invoices }: Prop
         router.post('/settings/billing/portal');
     }
 
+    const appUsagePct = Math.round((app_count / plan.app_limit) * 100);
+
     return (
         <AppLayout>
             <Head title="Billing" />
             <SettingsLayout>
                 <div className="space-y-6">
-                    {/* Plan overview */}
+                    {/* Current Plan */}
                     <Card>
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <Zap className="h-5 w-5" />
-                                Pay-as-you-go
+                                Current Plan
+                                <Badge variant={planBadgeVariant(plan.name)}>{plan.label}</Badge>
                             </CardTitle>
-                            <CardDescription>1,000 requests/month free · $0.0001 per request after that</CardDescription>
+                            <CardDescription>
+                                {plan.price === 0 ? 'Free tier — no credit card required' : formatPrice(plan.price)}
+                            </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-muted-foreground">Subscription status</span>
-                                {statusBadge(subscription?.status ?? null)}
+                            {/* App usage */}
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">Apps</span>
+                                    <span className="font-mono">{app_count} of {plan.app_limit}</span>
+                                </div>
+                                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                                    <div
+                                        className="h-full rounded-full bg-primary transition-all"
+                                        style={{ width: `${Math.min(100, appUsagePct)}%` }}
+                                    />
+                                </div>
                             </div>
 
-                            {subscription?.trial_ends_at && (
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-muted-foreground">Trial ends</span>
-                                    <span className="text-sm">{subscription.trial_ends_at}</span>
+                            {/* Plan limits */}
+                            <div className="grid grid-cols-2 gap-4 pt-2">
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">Max Memory</span>
+                                    <span className="font-mono">{plan.max_mem_mib} MB</span>
                                 </div>
-                            )}
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">Max vCPUs</span>
+                                    <span className="font-mono">{plan.max_vcpus}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">Custom Domains</span>
+                                    <span className="font-mono">{plan.custom_domains ? 'Yes' : 'No'}</span>
+                                </div>
+                            </div>
 
-                            {subscription?.ends_at && (
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-muted-foreground">Cancels on</span>
-                                    <span className="text-sm">{subscription.ends_at}</span>
-                                </div>
+                            {subscription && (
+                                <>
+                                    <Separator />
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-muted-foreground">Subscription status</span>
+                                        {statusBadge(subscription?.status ?? null)}
+                                    </div>
+
+                                    {subscription?.trial_ends_at && (
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm text-muted-foreground">Trial ends</span>
+                                            <span className="text-sm">{subscription.trial_ends_at}</span>
+                                        </div>
+                                    )}
+
+                                    {subscription?.ends_at && (
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm text-muted-foreground">Cancels on</span>
+                                            <span className="text-sm">{subscription.ends_at}</span>
+                                        </div>
+                                    )}
+                                </>
                             )}
 
                             <div className="flex gap-2 pt-2">
                                 {!isActive ? (
-                                    <Button onClick={handleSubscribe}>Subscribe</Button>
+                                    <Button onClick={handleSubscribe}>Upgrade Plan</Button>
                                 ) : (
                                     <Button variant="outline" onClick={handlePortal}>
                                         Manage Billing
@@ -101,6 +175,45 @@ export default function Billing({ subscription, payment_method, invoices }: Prop
                                     </Button>
                                 )}
                             </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Plan comparison */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Available Plans</CardTitle>
+                            <CardDescription>Compare features across plans.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Plan</TableHead>
+                                        <TableHead>Apps</TableHead>
+                                        <TableHead>Memory</TableHead>
+                                        <TableHead>vCPUs</TableHead>
+                                        <TableHead>Custom Domains</TableHead>
+                                        <TableHead>Price</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {Object.entries(available_plans).map(([key, p]) => (
+                                        <TableRow key={key} className={key === plan.name ? 'bg-muted/50' : ''}>
+                                            <TableCell className="font-medium">
+                                                {p.label}
+                                                {key === plan.name && (
+                                                    <Badge variant="outline" className="ml-2 text-xs">Current</Badge>
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-sm">{p.app_limit}</TableCell>
+                                            <TableCell className="font-mono text-sm">{p.max_mem_mib} MB</TableCell>
+                                            <TableCell className="font-mono text-sm">{p.max_vcpus}</TableCell>
+                                            <TableCell className="text-sm">{p.custom_domains ? 'Yes' : 'No'}</TableCell>
+                                            <TableCell className="font-mono text-sm">{formatPrice(p.price)}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
                         </CardContent>
                     </Card>
 
@@ -140,7 +253,7 @@ export default function Billing({ subscription, payment_method, invoices }: Prop
                                     </div>
                                 </div>
                             ) : (
-                                <p className="text-sm text-muted-foreground">Loading usage…</p>
+                                <p className="text-sm text-muted-foreground">Loading usage...</p>
                             )}
                         </CardContent>
                     </Card>

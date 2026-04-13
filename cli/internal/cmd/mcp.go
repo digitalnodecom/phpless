@@ -21,7 +21,7 @@ func newMCPCmd(version string) *cobra.Command {
 		Use:    "mcp",
 		Short:  "Start MCP server (for AI tool integration)",
 		Long:   "Starts a Model Context Protocol server over stdio for integration with AI tools like Claude Code, Cursor, etc.",
-		Hidden: true,
+		Hidden: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMCPServer(version)
 		},
@@ -163,6 +163,42 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("key", mcp.Required(), mcp.Description("Variable name")),
 		mcp.WithString("slug", mcp.Description("App slug (required when scope is 'app')")),
 	), handleDeleteEnv)
+
+	// restart_app
+	s.AddTool(mcp.NewTool("restart_app",
+		mcp.WithDescription("Restart an app's VM by redeploying existing code. Useful after config changes or to recover from a stuck state."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+	), handleRestartApp)
+
+	// write_file
+	s.AddTool(mcp.NewTool("write_file",
+		mcp.WithDescription("Write a file to the app's build directory. Useful for quick edits without a full redeploy. Call deploy or restart_app afterward to apply changes to the running VM."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithString("path", mcp.Required(), mcp.Description("File path relative to app root (e.g. 'index.php', 'public/style.css')")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("File content")),
+	), handleWriteFile)
+
+	// batch_set_env
+	s.AddTool(mcp.NewTool("batch_set_env",
+		mcp.WithDescription("Set multiple environment variables at once. More efficient than calling set_env multiple times."),
+		mcp.WithString("scope", mcp.Required(), mcp.Description("Scope: 'app' or 'team'"), mcp.Enum("app", "team")),
+		mcp.WithString("slug", mcp.Description("App slug (required when scope is 'app')")),
+		mcp.WithObject("variables", mcp.Required(), mcp.Description("Key-value pairs of environment variables to set")),
+	), handleBatchSetEnv)
+
+	// create_and_deploy
+	s.AddTool(mcp.NewTool("create_and_deploy",
+		mcp.WithDescription("Create a new app and deploy code from a local directory in one step. If the app already exists, just deploys."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("App name")),
+		mcp.WithString("directory", mcp.Required(), mcp.Description("Path to the directory to deploy")),
+	), handleCreateAndDeploy)
+
+	// rollback
+	s.AddTool(mcp.NewTool("rollback",
+		mcp.WithDescription("Rollback an app to a previous deployment. If no deployment_id is given, rolls back to the previous successful deployment."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithNumber("deployment_id", mcp.Description("Deployment ID to rollback to (omit for the previous one)")),
+	), handleRollback)
 }
 
 func handleWhoami(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -504,6 +540,217 @@ func handleDeleteEnv(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	return jsonResult(resp)
+}
+
+func handleRestartApp(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	resp, err := client.Restart(slug)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(map[string]any{
+		"message": resp.Message,
+		"app":     resp.App,
+	})
+}
+
+func handleWriteFile(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	content, err := req.RequireString("content")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	resp, err := client.WriteFile(slug, path, content)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(resp)
+}
+
+func handleBatchSetEnv(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Extract variables object from the request
+	args := req.GetArguments()
+	rawVars, ok := args["variables"]
+	if !ok {
+		return mcp.NewToolResultError("variables is required"), nil
+	}
+	varsMap, ok := rawVars.(map[string]any)
+	if !ok {
+		return mcp.NewToolResultError("variables must be an object of key-value string pairs"), nil
+	}
+
+	vars := make(map[string]string, len(varsMap))
+	for k, v := range varsMap {
+		vars[k] = fmt.Sprintf("%v", v)
+	}
+
+	if len(vars) == 0 {
+		return mcp.NewToolResultError("variables must contain at least one key-value pair"), nil
+	}
+
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	if scope == "team" {
+		resp, err := client.SetTeamEnv(vars)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(resp)
+	}
+
+	slug := req.GetString("slug", "")
+	if slug == "" {
+		return mcp.NewToolResultError("slug is required when scope is 'app'"), nil
+	}
+	resp, err := client.SetAppEnv(slug, vars)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(resp)
+}
+
+func handleCreateAndDeploy(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, err := req.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	dir, err := req.RequireString("directory")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid directory path: %s", err)), nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return mcp.NewToolResultError(fmt.Sprintf("directory not found: %s", dir)), nil
+	}
+
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Try to get existing app first
+	slug := name
+	var appResp *api.AppDetailResponse
+	appResp, err = client.GetApp(slug)
+
+	created := false
+	if err != nil {
+		// App doesn't exist — create it
+		createResp, createErr := client.CreateApp(&api.CreateAppRequest{Name: name})
+		if createErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to create app: %s", createErr)), nil
+		}
+		slug = createResp.App.Slug
+		created = true
+		// Refresh app detail
+		appResp, _ = client.GetApp(slug)
+	}
+
+	// Deploy code
+	tarBuf, fileCount, err := archive.CreateTarGz(dir)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create archive: %s", err)), nil
+	}
+
+	deployResp, err := client.Deploy(slug, tarBuf, "deploy.tar.gz")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("deploy failed: %s", err)), nil
+	}
+
+	url := deployResp.App.URL
+	if url == "" {
+		url = fmt.Sprintf("https://%s.phpless.app", slug)
+	}
+
+	result := map[string]any{
+		"created":    created,
+		"slug":       slug,
+		"url":        url,
+		"message":    deployResp.Message,
+		"file_count": fileCount,
+		"archive_kb": float64(tarBuf.Len()) / 1024,
+	}
+	if appResp != nil {
+		result["app"] = appResp.App
+	}
+
+	return jsonResult(result)
+}
+
+func handleRollback(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	deploymentID := req.GetInt("deployment_id", 0)
+
+	if deploymentID == 0 {
+		// Find the previous successful deployment
+		appResp, err := client.GetApp(slug)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		skippedCurrent := false
+		for _, d := range appResp.App.Deployments {
+			if d.Status == "succeeded" {
+				if !skippedCurrent {
+					skippedCurrent = true
+					continue
+				}
+				deploymentID = d.ID
+				break
+			}
+		}
+
+		if deploymentID == 0 {
+			return mcp.NewToolResultError("no previous deployment to rollback to"), nil
+		}
+	}
+
+	resp, err := client.Rollback(slug, deploymentID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	return jsonResult(resp)
 }
 

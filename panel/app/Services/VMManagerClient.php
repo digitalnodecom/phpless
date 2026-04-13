@@ -288,4 +288,12 @@ class VMManagerClient
             ->json('session_id');
     }
 
+    public function createLogSession(string $slug): string
+    {
+        return $this->request()
+            ->post('/log-sessions', ['slug' => $slug])
+            ->throw()
+            ->json('session_id');
+    }
+
 }

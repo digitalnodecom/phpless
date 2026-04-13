@@ -56,4 +56,16 @@ class User extends Authenticatable
     {
         return $this->belongsTo(Team::class, 'current_team_id');
     }
+
+    public function roleInTeam(Team $team): string
+    {
+        $pivot = $this->teams()->where('team_id', $team->id)->first()?->pivot;
+
+        return $pivot?->role ?? 'viewer';
+    }
+
+    public function hasTeamRole(Team $team, array $roles): bool
+    {
+        return in_array($this->roleInTeam($team), $roles, true);
+    }
 }

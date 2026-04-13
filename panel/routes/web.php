@@ -268,6 +268,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     ]);
 
     Route::post('apps/{app}/deploy', [AppController::class, 'deploy'])->name('apps.deploy');
+    Route::post('apps/{app}/rollback/{deployment}', [AppController::class, 'rollback'])->name('apps.rollback');
     Route::get('apps/{app}/files', [AppController::class, 'files'])->name('apps.files');
     Route::post('apps/{app}/files/upload', [AppController::class, 'filesUpload'])->name('apps.files.upload');
     Route::post('apps/{app}/files/write', [AppController::class, 'filesWrite'])->name('apps.files.write');
@@ -286,6 +287,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/github/disconnect', [AppController::class, 'githubDisconnect'])->name('apps.github.disconnect');
     Route::post('apps/{app}/github/deploy', [AppController::class, 'githubDeploy'])->name('apps.github.deploy');
     Route::post('apps/{app}/terminal-session', [TerminalController::class, 'store'])->name('apps.terminal-session');
+    Route::post('apps/{app}/log-session', [AppController::class, 'logSession'])->name('apps.log-session');
     Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
     Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
 
@@ -305,8 +307,13 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('teams', [TeamController::class, 'store'])->name('teams.store');
     Route::post('teams/{team}/switch', [TeamController::class, 'switchTeam'])->name('teams.switch');
 
-    // Team settings
-    Route::get('settings/team/env', [TeamEnvironmentVariableController::class, 'index'])->name('team.env.index');
+    // Team settings (JSON requests get env vars data; browser navigations redirect to unified team page)
+    Route::get('settings/team/env', function (\Illuminate\Http\Request $request) {
+        if ($request->wantsJson()) {
+            return app(\App\Http\Controllers\TeamEnvironmentVariableController::class)->index($request);
+        }
+        return redirect('/settings/team');
+    })->name('team.env.index');
     Route::post('settings/team/env', [TeamEnvironmentVariableController::class, 'store'])->name('team.env.store');
     Route::put('settings/team/env/{envVar}', [TeamEnvironmentVariableController::class, 'update'])->name('team.env.update');
     Route::delete('settings/team/env/{envVar}', [TeamEnvironmentVariableController::class, 'destroy'])->name('team.env.destroy');

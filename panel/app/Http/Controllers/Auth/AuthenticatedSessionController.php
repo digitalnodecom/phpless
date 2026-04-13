@@ -33,6 +33,11 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
+        // If this login was initiated by the CLI, redirect to token callback
+        if ($request->session()->has('cli_auth')) {
+            return redirect()->route('auth.cli.callback');
+        }
+
         return redirect()->intended(route('dashboard', absolute: false));
     }
 
