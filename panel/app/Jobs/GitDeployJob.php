@@ -7,6 +7,7 @@ use App\Models\Deployment;
 use App\Services\CaddyConfigManager;
 use App\Services\CaddyfileGenerator;
 use App\Services\EnvironmentVariableService;
+use App\Services\SqliteDetector;
 use App\Services\VMManagerClient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -67,6 +68,21 @@ class GitDeployJob implements ShouldQueue
                 File::deleteDirectory($gitDir);
             }
 
+            // Detect SQLite databases and auto-persist them
+            $detectedDbs = SqliteDetector::detect($buildDir, $this->app);
+            if (! empty($detectedDbs)) {
+                $merged = SqliteDetector::mergeDetections($this->app->sqlite_databases ?? [], $detectedDbs);
+                $this->app->update(['sqlite_databases' => $merged]);
+
+                $persistentPaths = $this->app->persistent_paths ?? [];
+                foreach ($merged as $db) {
+                    if (! empty($db['persistent']) && ! in_array($db['path'], $persistentPaths, true)) {
+                        $persistentPaths[] = $db['path'];
+                    }
+                }
+                $this->app->update(['persistent_paths' => $persistentPaths]);
+            }
+
             // Deploy to VM
             if (! $this->app->vm_id) {
                 $deployment->update([
@@ -90,6 +106,7 @@ class GitDeployJob implements ShouldQueue
                 null,
                 null,
                 $this->app->cron_enabled,
+                $this->app->sqlite_databases ?? [],
             );
 
             $newVmId = $result['vm_id'] ?? $this->app->vm_id;

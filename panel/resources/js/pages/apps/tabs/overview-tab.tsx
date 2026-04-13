@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { type App } from '@/types';
-import { CheckCircle, ExternalLink, Rocket, X } from 'lucide-react';
+import { CheckCircle, Database, ExternalLink, Rocket, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 
@@ -123,12 +123,63 @@ function FirstDeployBanner({ app }: { app: App }) {
     );
 }
 
+function SqliteBackupBanner({ app }: { app: App }) {
+    const [dismissed, setDismissed] = useState(() => {
+        try {
+            return localStorage.getItem(`phpless-sqlite-backup-banner-${app.id}`) === '1';
+        } catch {
+            return false;
+        }
+    });
+
+    const unbackedDbs = (app.sqlite_databases ?? []).filter((db) => !db.backup_enabled);
+    if (dismissed || unbackedDbs.length === 0) return null;
+
+    const handleDismiss = () => {
+        setDismissed(true);
+        try {
+            localStorage.setItem(`phpless-sqlite-backup-banner-${app.id}`, '1');
+        } catch { /* ignore */ }
+    };
+
+    return (
+        <Card className="border-blue-500/30 bg-blue-500/5 relative mb-4">
+            <button
+                onClick={handleDismiss}
+                className="text-muted-foreground hover:text-foreground absolute right-3 top-3"
+                aria-label="Dismiss"
+            >
+                <X className="h-4 w-4" />
+            </button>
+            <CardContent className="flex items-center gap-4 py-4">
+                <Database className="h-6 w-6 shrink-0 text-blue-500" />
+                <div className="flex-1">
+                    <p className="font-medium">SQLite database detected</p>
+                    <p className="text-muted-foreground text-sm">
+                        {unbackedDbs.length === 1
+                            ? `Found at ${unbackedDbs[0].path}. Enable backups to protect your data.`
+                            : `${unbackedDbs.length} databases found without backups enabled.`}
+                    </p>
+                </div>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => document.querySelector<HTMLButtonElement>('[value="database"]')?.click()}
+                >
+                    Enable backups
+                </Button>
+            </CardContent>
+        </Card>
+    );
+}
+
 export default function OverviewTab({ app }: { app: App }) {
     const appUrl = `https://${app.slug}.phpless.digitalno.de`;
 
     return (
         <>
             <FirstDeployBanner app={app} />
+            <SqliteBackupBanner app={app} />
             {(!app.deployments || app.deployments.length === 0) && <GetStartedCard app={app} />}
             <Card>
                 <CardHeader>

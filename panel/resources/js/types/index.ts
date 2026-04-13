@@ -96,6 +96,7 @@ export interface App {
     build_command: string | null;
     detected_framework: string | null;
     persistent_paths: string[] | null;
+    sqlite_databases: SqliteDatabase[] | null;
     created_at: string;
     updated_at: string;
     workers: WorkerDef[] | null;
@@ -109,6 +110,13 @@ export interface App {
     cpu_pct: number | null;
     deployments?: Deployment[];
     domains?: Domain[];
+}
+
+export interface SqliteDatabase {
+    path: string;
+    persistent: boolean;
+    backup_enabled: boolean;
+    detected_at: string | null;
 }
 
 export interface PortMapping {

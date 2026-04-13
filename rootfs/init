@@ -111,6 +111,19 @@ if [ -f /var/spool/cron/crontabs/root ]; then
     echo "[phpless-init] crond started (scheduler enabled)"
 fi
 
+# Start Litestream for SQLite backup replication (config written by deploy process)
+if [ -f /etc/litestream.yml ] && command -v litestream > /dev/null 2>&1; then
+    # Set WAL mode on each backed-up database before Litestream starts
+    if command -v sqlite-optimize > /dev/null 2>&1; then
+        for db in $(grep '^ *- path:' /etc/litestream.yml | sed 's/.*path: *//'); do
+            sqlite-optimize "$db"
+        done
+        echo "[phpless-init] SQLite pragmas applied"
+    fi
+    litestream replicate -config /etc/litestream.yml &
+    echo "[phpless-init] Litestream started"
+fi
+
 # Limit Go runtime memory in microVMs
 export GOMAXPROCS=1
 export GOMEMLIMIT=64MiB

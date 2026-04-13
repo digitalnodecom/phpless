@@ -5,10 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
+// SqliteDatabase represents a SQLite database configuration from the panel.
+type SqliteDatabase struct {
+	Path          string `json:"path"`
+	BackupEnabled bool   `json:"backup_enabled"`
+}
+
 // DeployToOverlay mounts a tenant's overlay image and syncs app code into it.
-func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool) error {
+func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool, sqliteDatabases []SqliteDatabase) error {
 	if _, err := os.Stat(overlayPath); os.IsNotExist(err) {
 		return fmt.Errorf("overlay image not found: %s", overlayPath)
 	}
@@ -88,6 +95,11 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 		os.Remove(filepath.Join(mountDir, "var", "spool", "cron", "crontabs", "root"))
 	}
 
+	// Generate Litestream config for backed-up SQLite databases
+	if err := writeLitestreamConfig(etcDir, sqliteDatabases); err != nil {
+		return fmt.Errorf("write litestream.yml: %w", err)
+	}
+
 	// Create /app/storage structure in overlay upper layer
 	upperStorage := filepath.Join(mountDir, "upper", "app", "storage")
 	os.MkdirAll(upperStorage, 0777)
@@ -106,7 +118,7 @@ func DeployToOverlay(overlayPath, appDir string, persistentPaths []string, envCo
 // requiring a full rootfs rebuild.
 var InitScriptPath = "/srv/firecracker/base/rootfs/init"
 
-func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool) error {
+func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envContent, caddyfileContent, workersConfig string, cronEnabled bool, sqliteDatabases []SqliteDatabase) error {
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs image not found: %s", rootfsPath)
 	}
@@ -195,6 +207,12 @@ func DeployToRootfs(rootfsPath, appDir string, persistentPaths []string, envCont
 		os.Remove(filepath.Join(mountDir, "var", "spool", "cron", "crontabs", "root"))
 	}
 
+	// Generate Litestream config for backed-up SQLite databases
+	rootEtcDir := filepath.Join(mountDir, "etc")
+	if err := writeLitestreamConfig(rootEtcDir, sqliteDatabases); err != nil {
+		return fmt.Errorf("write litestream.yml: %w", err)
+	}
+
 	// Create /app/storage structure — runtime dirs are excluded from rsync so they survive redeploys
 	storagePath := filepath.Join(mountDir, "app", "storage")
 	os.MkdirAll(storagePath, 0777)
@@ -223,6 +241,54 @@ func CreateOverlay(path string, sizeMB int) error {
 
 	_ = size
 	return nil
+}
+
+// writeLitestreamConfig generates /etc/litestream.yml for databases with backup_enabled,
+// or removes it if no databases need backup. mountDir is the root of the mounted filesystem.
+func writeLitestreamConfig(etcDir string, databases []SqliteDatabase) error {
+	configPath := filepath.Join(etcDir, "litestream.yml")
+
+	// Collect backed-up databases
+	var backed []SqliteDatabase
+	for _, db := range databases {
+		if db.BackupEnabled {
+			backed = append(backed, db)
+		}
+	}
+
+	if len(backed) == 0 {
+		os.Remove(configPath)
+		return nil
+	}
+
+	// Ensure backup directory exists on the filesystem
+	// etcDir is <mountDir>/etc, so go up one level to find the mount root
+	mountDir := filepath.Dir(etcDir)
+	backupDir := filepath.Join(mountDir, "var", "backups", "litestream")
+	os.MkdirAll(backupDir, 0755)
+
+	// Build YAML config
+	var b strings.Builder
+	b.WriteString("dbs:\n")
+	for _, db := range backed {
+		dbPath := "/app/" + db.Path
+		replicaName := sanitizeReplicaPath(db.Path)
+		b.WriteString(fmt.Sprintf("  - path: %s\n", dbPath))
+		b.WriteString("    replicas:\n")
+		b.WriteString("      - type: file\n")
+		b.WriteString(fmt.Sprintf("        path: /var/backups/litestream/%s\n", replicaName))
+	}
+
+	os.MkdirAll(etcDir, 0755)
+	return os.WriteFile(configPath, []byte(b.String()), 0644)
+}
+
+// sanitizeReplicaPath converts a relative app path like "database/database.sqlite"
+// into a safe directory name like "database-database-sqlite".
+func sanitizeReplicaPath(path string) string {
+	s := strings.ReplaceAll(path, "/", "-")
+	s = strings.ReplaceAll(s, ".", "-")
+	return s
 }
 
 // runCmd executes a command and returns an error with output on failure.

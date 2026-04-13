@@ -87,6 +87,9 @@ func newDeployCmd() *cobra.Command {
 				fmt.Printf("  URL: %s\n", resp.App.URL)
 			}
 
+			// Show detected databases
+			printDetectedDatabases(client, slug)
+
 			return nil
 		},
 	}

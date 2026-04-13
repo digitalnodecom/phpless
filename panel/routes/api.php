@@ -33,6 +33,18 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
         Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);
     });
 
+    // Database management — read
+    Route::middleware('throttle:api-reads')->group(function () {
+        Route::get('apps/{app:slug}/databases', [AppController::class, 'databases']);
+        Route::get('apps/{app:slug}/databases/backup', [AppController::class, 'databaseBackup']);
+    });
+
+    // Database management — write
+    Route::middleware('throttle:api-env-mutate')->group(function () {
+        Route::put('apps/{app:slug}/databases', [AppController::class, 'databasesUpdate']);
+        Route::post('apps/{app:slug}/databases/restore', [AppController::class, 'databaseRestore']);
+    });
+
     // App creation — 5/hour
     Route::middleware('throttle:api-app-create')->group(function () {
         Route::post('apps', [AppController::class, 'store']);

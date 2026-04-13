@@ -25,6 +25,7 @@ class App extends Model
         'web_root',
         'detected_framework',
         'persistent_paths',
+        'sqlite_databases',
         'workers',
         'port_mappings',
         'ip_allowlist',
@@ -41,6 +42,7 @@ class App extends Model
             'worker_count' => 'integer',
             'mercure_enabled' => 'boolean',
             'persistent_paths' => 'array',
+            'sqlite_databases' => 'array',
             'workers' => 'array',
             'port_mappings' => 'array',
             'ip_allowlist' => 'array',
@@ -72,6 +74,36 @@ class App extends Model
     public function requestMetrics(): HasMany
     {
         return $this->hasMany(RequestMetric::class);
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getSqlitePaths(): array
+    {
+        return array_column($this->sqlite_databases ?? [], 'path');
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getPersistentSqlitePaths(): array
+    {
+        return array_column(
+            array_filter($this->sqlite_databases ?? [], fn ($db) => ! empty($db['persistent'])),
+            'path',
+        );
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getBackedUpSqlitePaths(): array
+    {
+        return array_column(
+            array_filter($this->sqlite_databases ?? [], fn ($db) => ! empty($db['backup_enabled'])),
+            'path',
+        );
     }
 
     public function url(): string

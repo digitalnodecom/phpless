@@ -112,7 +112,7 @@ class RestoreVms extends Command
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
+            $result = $vmManager->deployCode($vmId, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
             $newVmId = $result['vm_id'] ?? $vmId;
 
             $vm = $vmManager->waitForRunning($newVmId);

@@ -41,6 +41,7 @@ func NewRootCmd(version string) *cobra.Command {
 	rootCmd.AddCommand(newEnvCmd())
 	rootCmd.AddCommand(newFilesCmd())
 	rootCmd.AddCommand(newStorageCmd())
+	rootCmd.AddCommand(newDbCmd())
 	rootCmd.AddCommand(newInfoCmd())
 	rootCmd.AddCommand(newSSHCmd())
 	rootCmd.AddCommand(newInitCmd())

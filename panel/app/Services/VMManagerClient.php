@@ -85,7 +85,7 @@ class VMManagerClient
         }
     }
 
-    public function deployCode(string $vmId, string $appDir, string $envContent = '', string $caddyfileContent = '', array $persistentPaths = [], string $workersConfig = '', ?int $vcpus = null, ?int $memMib = null, bool $cronEnabled = false): array
+    public function deployCode(string $vmId, string $appDir, string $envContent = '', string $caddyfileContent = '', array $persistentPaths = [], string $workersConfig = '', ?int $vcpus = null, ?int $memMib = null, bool $cronEnabled = false, array $sqliteDatabases = []): array
     {
         $payload = [
             'app_dir' => $appDir,
@@ -114,6 +114,10 @@ class VMManagerClient
 
         if ($cronEnabled) {
             $payload['cron_enabled'] = true;
+        }
+
+        if (! empty($sqliteDatabases)) {
+            $payload['sqlite_databases'] = $sqliteDatabases;
         }
 
         $response = $this->request()->timeout(60)->post("/vms/{$vmId}/deploy", $payload);

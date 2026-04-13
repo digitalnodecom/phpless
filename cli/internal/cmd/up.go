@@ -128,6 +128,9 @@ func newUpCmd() *cobra.Command {
 
 			ui.Success("App live at %s", url)
 
+			// Show detected databases
+			printDetectedDatabases(client, slug)
+
 			return nil
 		},
 	}

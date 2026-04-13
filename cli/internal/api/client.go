@@ -186,21 +186,30 @@ func (c *Client) ListApps() (*AppsResponse, error) {
 	return &resp, err
 }
 
+type SqliteDatabase struct {
+	Path          string `json:"path"`
+	Persistent    bool   `json:"persistent"`
+	BackupEnabled bool   `json:"backup_enabled"`
+	DetectedAt    string `json:"detected_at,omitempty"`
+	Size          *int64 `json:"size,omitempty"`
+}
+
 type AppDetail struct {
-	Slug         string `json:"slug"`
-	Name         string `json:"name"`
-	URL          string `json:"url"`
-	VMState      string `json:"vm_state"`
-	VMID         string `json:"vm_id"`
-	VMIP         string `json:"vm_ip"`
-	VCPUs        int    `json:"vcpus"`
-	MemMiB       int    `json:"mem_mib"`
-	PHPVersion   string `json:"php_version"`
-	GithubRepo   string `json:"github_repo"`
-	GithubBranch string `json:"github_branch"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	Deployments  []struct {
+	Slug            string           `json:"slug"`
+	Name            string           `json:"name"`
+	URL             string           `json:"url"`
+	VMState         string           `json:"vm_state"`
+	VMID            string           `json:"vm_id"`
+	VMIP            string           `json:"vm_ip"`
+	VCPUs           int              `json:"vcpus"`
+	MemMiB          int              `json:"mem_mib"`
+	PHPVersion      string           `json:"php_version"`
+	GithubRepo      string           `json:"github_repo"`
+	GithubBranch    string           `json:"github_branch"`
+	SqliteDatabases []SqliteDatabase `json:"sqlite_databases"`
+	CreatedAt       string           `json:"created_at"`
+	UpdatedAt       string           `json:"updated_at"`
+	Deployments     []struct {
 		ID            int    `json:"id"`
 		Status        string `json:"status"`
 		CommitMessage string `json:"commit_message"`
@@ -584,6 +593,77 @@ func (c *Client) DownloadStorage(slug, path string) (io.ReadCloser, string, erro
 	}
 
 	return resp.Body, filename, nil
+}
+
+// --- Databases ---
+
+type DatabasesResponse struct {
+	Databases []SqliteDatabase `json:"databases"`
+}
+
+func (c *Client) ListDatabases(slug string) (*DatabasesResponse, error) {
+	var resp DatabasesResponse
+	err := c.do("GET", "/apps/"+slug+"/databases", nil, &resp)
+	return &resp, err
+}
+
+func (c *Client) UpdateDatabases(slug string, databases []SqliteDatabase) (*DatabasesResponse, error) {
+	var resp DatabasesResponse
+	err := c.do("PUT", "/apps/"+slug+"/databases", map[string]any{"databases": databases}, &resp)
+	return &resp, err
+}
+
+// DownloadDatabaseBackup downloads a SQLite database backup from the app's VM.
+// The caller is responsible for closing the returned ReadCloser.
+func (c *Client) DownloadDatabaseBackup(slug, path string) (io.ReadCloser, string, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/apps/"+slug+"/databases/backup?path="+path, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		if err := json.Unmarshal(body, apiErr); err != nil {
+			apiErr.Message = string(body)
+		}
+		return nil, "", apiErr
+	}
+
+	filename := path
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn, ok := params["filename"]; ok {
+				filename = fn
+			}
+		}
+	}
+
+	return resp.Body, filename, nil
+}
+
+type RestoreDatabaseResponse struct {
+	Message string `json:"message"`
+	Output  string `json:"output,omitempty"`
+}
+
+func (c *Client) RestoreDatabaseBackup(slug, path, timestamp string) (*RestoreDatabaseResponse, error) {
+	body := map[string]string{"path": path}
+	if timestamp != "" {
+		body["timestamp"] = timestamp
+	}
+	var resp RestoreDatabaseResponse
+	err := c.do("POST", "/apps/"+slug+"/databases/restore", body, &resp)
+	return &resp, err
 }
 
 // --- Rollback ---

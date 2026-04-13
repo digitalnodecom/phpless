@@ -133,14 +133,15 @@ type VMResponse struct {
 
 // DeployRequest is the request body for deploying code.
 type DeployRequest struct {
-	AppDir           string   `json:"app_dir"`
-	PersistentPaths  []string `json:"persistent_paths,omitempty"`
-	EnvContent       string   `json:"env_content,omitempty"`
-	CaddyfileContent string   `json:"caddyfile_content,omitempty"`
-	WorkersConfig    string   `json:"workers_config,omitempty"` // JSON array of worker definitions
-	CronEnabled      bool     `json:"cron_enabled,omitempty"`   // enable cron (php artisan schedule:run every minute)
-	VCPUs            int      `json:"vcpus,omitempty"`          // resize: new vCPU count
-	MemMiB           int      `json:"mem_mib,omitempty"`        // resize: new memory in MiB
+	AppDir           string                  `json:"app_dir"`
+	PersistentPaths  []string                `json:"persistent_paths,omitempty"`
+	EnvContent       string                  `json:"env_content,omitempty"`
+	CaddyfileContent string                  `json:"caddyfile_content,omitempty"`
+	WorkersConfig    string                  `json:"workers_config,omitempty"`    // JSON array of worker definitions
+	CronEnabled      bool                    `json:"cron_enabled,omitempty"`      // enable cron (php artisan schedule:run every minute)
+	VCPUs            int                     `json:"vcpus,omitempty"`             // resize: new vCPU count
+	MemMiB           int                     `json:"mem_mib,omitempty"`           // resize: new memory in MiB
+	SqliteDatabases  []deploy.SqliteDatabase `json:"sqlite_databases,omitempty"`  // SQLite databases with backup config
 }
 
 // UpstreamResponse is returned for Caddy routing queries.
@@ -275,7 +276,7 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 
 	if v.Config.Overlay {
 		overlayPath := v.Config.OverlayPath(s.manager.TenantDir())
-		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.PersistentPaths, req.EnvContent, req.CaddyfileContent, req.WorkersConfig, req.CronEnabled); err != nil {
+		if err := deploy.DeployToOverlay(overlayPath, req.AppDir, req.PersistentPaths, req.EnvContent, req.CaddyfileContent, req.WorkersConfig, req.CronEnabled, req.SqliteDatabases); err != nil {
 			httpError(w, http.StatusInternalServerError, "deploy failed: %v", err)
 			return
 		}
@@ -296,8 +297,9 @@ func (s *Server) deployCode(w http.ResponseWriter, r *http.Request) {
 		caddyfileContent := req.CaddyfileContent
 		workersConfig := req.WorkersConfig
 		cronEnabled := req.CronEnabled
+		sqliteDatabases := req.SqliteDatabases
 		deployFn = func(rootfsPath string) error {
-			return deploy.DeployToRootfs(rootfsPath, appDir, persistentPaths, envContent, caddyfileContent, workersConfig, cronEnabled)
+			return deploy.DeployToRootfs(rootfsPath, appDir, persistentPaths, envContent, caddyfileContent, workersConfig, cronEnabled, sqliteDatabases)
 		}
 	}
 	newVM, err := s.manager.Redeploy(id, deployFn, cfgOverride)

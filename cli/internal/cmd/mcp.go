@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -193,6 +194,41 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("directory", mcp.Required(), mcp.Description("Path to the directory to deploy")),
 	), handleCreateAndDeploy)
 
+	// list_databases
+	s.AddTool(mcp.NewTool("list_databases",
+		mcp.WithDescription("List SQLite databases detected in an app, with size info when running"),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+	), handleListDatabases)
+
+	// enable_db_backup
+	s.AddTool(mcp.NewTool("enable_db_backup",
+		mcp.WithDescription("Enable backup for SQLite database(s). If path is omitted, enables for all detected databases."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithString("path", mcp.Description("Database path (omit to enable for all)")),
+	), handleEnableDbBackup)
+
+	// disable_db_backup
+	s.AddTool(mcp.NewTool("disable_db_backup",
+		mcp.WithDescription("Disable backup for SQLite database(s). If path is omitted, disables for all databases."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithString("path", mcp.Description("Database path (omit to disable for all)")),
+	), handleDisableDbBackup)
+
+	// download_db_backup
+	s.AddTool(mcp.NewTool("download_db_backup",
+		mcp.WithDescription("Download a SQLite database backup from an app's VM. Saves to a temp file and returns the path."),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithString("path", mcp.Description("Database path (defaults to first backed-up or detected database)")),
+	), handleDownloadDbBackup)
+
+	// restore_database
+	s.AddTool(mcp.NewTool("restore_database",
+		mcp.WithDescription("Restore a SQLite database from a Litestream backup"),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+		mcp.WithString("path", mcp.Description("Database path (defaults to first database)")),
+		mcp.WithString("timestamp", mcp.Description("Restore to specific point in time (ISO 8601 format, omit for latest)")),
+	), handleRestoreDatabase)
+
 	// rollback
 	s.AddTool(mcp.NewTool("rollback",
 		mcp.WithDescription("Rollback an app to a previous deployment. If no deployment_id is given, rolls back to the previous successful deployment."),
@@ -361,12 +397,20 @@ func handleDeploy(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return jsonResult(map[string]any{
+	result := map[string]any{
 		"message":    resp.Message,
 		"app":        resp.App,
 		"file_count": fileCount,
 		"archive_kb": float64(tarBuf.Len()) / 1024,
-	})
+	}
+
+	// Include detected databases if present in the app detail
+	appDetail, err := client.GetApp(slug)
+	if err == nil && appDetail != nil && len(appDetail.App.SqliteDatabases) > 0 {
+		result["detected_databases"] = appDetail.App.SqliteDatabases
+	}
+
+	return jsonResult(result)
 }
 
 func handlePullApp(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -707,6 +751,211 @@ func handleCreateAndDeploy(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	}
 
 	return jsonResult(result)
+}
+
+func handleListDatabases(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	resp, err := client.ListDatabases(slug)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(resp)
+}
+
+func handleEnableDbBackup(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	resp, err := client.ListDatabases(slug)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(resp.Databases) == 0 {
+		return mcp.NewToolResultError("no databases detected for this app"), nil
+	}
+
+	targetPath := req.GetString("path", "")
+	updated := make([]api.SqliteDatabase, len(resp.Databases))
+	changed := 0
+	for i, db := range resp.Databases {
+		updated[i] = db
+		if targetPath == "" || db.Path == targetPath {
+			updated[i].BackupEnabled = true
+			updated[i].Persistent = true
+			changed++
+		}
+	}
+
+	if targetPath != "" && changed == 0 {
+		return mcp.NewToolResultError(fmt.Sprintf("database path %q not found", targetPath)), nil
+	}
+
+	updateResp, err := client.UpdateDatabases(slug, updated)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return jsonResult(map[string]any{
+		"message":   fmt.Sprintf("Enabled backup for %d database(s)", changed),
+		"databases": updateResp.Databases,
+	})
+}
+
+func handleDisableDbBackup(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	resp, err := client.ListDatabases(slug)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(resp.Databases) == 0 {
+		return mcp.NewToolResultError("no databases detected for this app"), nil
+	}
+
+	targetPath := req.GetString("path", "")
+	updated := make([]api.SqliteDatabase, len(resp.Databases))
+	changed := 0
+	for i, db := range resp.Databases {
+		updated[i] = db
+		if targetPath == "" || db.Path == targetPath {
+			updated[i].BackupEnabled = false
+			changed++
+		}
+	}
+
+	if targetPath != "" && changed == 0 {
+		return mcp.NewToolResultError(fmt.Sprintf("database path %q not found", targetPath)), nil
+	}
+
+	updateResp, err := client.UpdateDatabases(slug, updated)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return jsonResult(map[string]any{
+		"message":   fmt.Sprintf("Disabled backup for %d database(s)", changed),
+		"databases": updateResp.Databases,
+	})
+}
+
+func handleDownloadDbBackup(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	dbPath := req.GetString("path", "")
+
+	// If no path specified, find the first backed-up or detected database
+	if dbPath == "" {
+		resp, err := client.ListDatabases(slug)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if len(resp.Databases) == 0 {
+			return mcp.NewToolResultError("no databases detected for this app"), nil
+		}
+		// Prefer first backup-enabled DB, else first DB
+		for _, db := range resp.Databases {
+			if db.BackupEnabled {
+				dbPath = db.Path
+				break
+			}
+		}
+		if dbPath == "" {
+			dbPath = resp.Databases[0].Path
+		}
+	}
+
+	body, filename, err := client.DownloadDatabaseBackup(slug, dbPath)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer body.Close()
+
+	// Save to temp file
+	tmpDir := os.TempDir()
+	tmpFile := filepath.Join(tmpDir, fmt.Sprintf("phpless-%s-%s", slug, filename))
+	f, err := os.Create(tmpFile)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create temp file: %s", err)), nil
+	}
+	defer f.Close()
+
+	written, err := copyWithLimit(f, body, 500*1024*1024) // 500MB limit
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to write backup: %s", err)), nil
+	}
+
+	return jsonResult(map[string]any{
+		"message":  fmt.Sprintf("Downloaded database backup to %s", tmpFile),
+		"path":     tmpFile,
+		"db_path":  dbPath,
+		"size":     written,
+		"size_mib": float64(written) / 1024 / 1024,
+	})
+}
+
+// copyWithLimit copies up to limit bytes from src to dst.
+func copyWithLimit(dst *os.File, src io.Reader, limit int64) (int64, error) {
+	return io.Copy(dst, io.LimitReader(src, limit))
+}
+
+func handleRestoreDatabase(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	dbPath := req.GetString("path", "")
+	timestamp := req.GetString("timestamp", "")
+
+	// If no path specified, find the first database
+	if dbPath == "" {
+		resp, err := client.ListDatabases(slug)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if len(resp.Databases) == 0 {
+			return mcp.NewToolResultError("no databases detected for this app"), nil
+		}
+		dbPath = resp.Databases[0].Path
+	}
+
+	resp, err := client.RestoreDatabaseBackup(slug, dbPath, timestamp)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return jsonResult(resp)
 }
 
 func handleRollback(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -69,6 +69,29 @@ ln -sf /init "${ROOTFS_DIR}/sbin/init"
 gcc -static -o "${ROOTFS_DIR}/usr/local/bin/add_entropy" /var/www/phpless/rootfs/add_entropy.c
 chmod +x "${ROOTFS_DIR}/usr/local/bin/add_entropy"
 
+# Litestream — SQLite replication for persistent backups
+LITESTREAM_VERSION="0.3.13"
+LITESTREAM_URL="https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.tar.gz"
+curl -sL "$LITESTREAM_URL" | tar -xz -C "${ROOTFS_DIR}/usr/local/bin/" litestream
+chmod +x "${ROOTFS_DIR}/usr/local/bin/litestream"
+echo "  Litestream ${LITESTREAM_VERSION} installed ✓"
+
+# sqlite3 CLI — needed for setting WAL mode and pragmas on deploy
+chroot "${ROOTFS_DIR}" apt-get install -y --no-install-recommends sqlite3
+echo "  sqlite3 CLI installed ✓"
+
+# sqlite-optimize — sets optimal SQLite pragmas for backed-up databases
+cat > "${ROOTFS_DIR}/usr/local/bin/sqlite-optimize" << 'SQLEOF'
+#!/bin/sh
+for db in "$@"; do
+    if [ -f "$db" ]; then
+        sqlite3 "$db" "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;" 2>/dev/null || true
+    fi
+done
+SQLEOF
+chmod +x "${ROOTFS_DIR}/usr/local/bin/sqlite-optimize"
+echo "  sqlite-optimize script installed ✓"
+
 # FrankenPHP Caddyfile
 mkdir -p "${ROOTFS_DIR}/etc/frankenphp"
 cp /var/www/phpless/rootfs/Caddyfile "${ROOTFS_DIR}/etc/frankenphp/Caddyfile"

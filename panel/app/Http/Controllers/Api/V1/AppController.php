@@ -10,6 +10,7 @@ use App\Services\CaddyConfigManager;
 use App\Services\CaddyfileGenerator;
 use App\Services\EnvironmentVariableService;
 use App\Services\FrameworkDetector;
+use App\Services\SqliteDetector;
 use App\Services\VMManagerClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -172,11 +173,27 @@ class AppController extends Controller
             $app->update(['build_command' => $detected['build_command']]);
         }
 
+        // Detect SQLite databases and auto-persist them
+        $detectedDbs = SqliteDetector::detect($buildDir, $app);
+        if (! empty($detectedDbs)) {
+            $merged = SqliteDetector::mergeDetections($app->sqlite_databases ?? [], $detectedDbs);
+            $app->update(['sqlite_databases' => $merged]);
+
+            // Auto-add persistent SQLite paths to persistent_paths
+            $persistentPaths = $app->persistent_paths ?? [];
+            foreach ($merged as $db) {
+                if (! empty($db['persistent']) && ! in_array($db['path'], $persistentPaths, true)) {
+                    $persistentPaths[] = $db['path'];
+                }
+            }
+            $app->update(['persistent_paths' => $persistentPaths]);
+        }
+
         try {
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {
@@ -290,7 +307,7 @@ class AppController extends Controller
             $envContent = $envService->generateEnvContent($app);
             $caddyContent = (new CaddyfileGenerator)->generate($app);
             $workersConfig = ! empty($app->workers) ? json_encode($app->workers) : '';
-            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled);
+            $result = $vmManager->deployCode($app->vm_id, $buildDir, $envContent, $caddyContent, $app->persistent_paths ?? [], $workersConfig, null, null, $app->cron_enabled, $app->sqlite_databases ?? []);
 
             $newVmId = $result['vm_id'] ?? $app->vm_id;
             try {
@@ -712,6 +729,178 @@ class AppController extends Controller
     }
 
     /**
+     * List SQLite databases
+     *
+     * Returns the app's detected and configured SQLite databases with size info when the VM is running.
+     */
+    public function databases(App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $databases = $app->sqlite_databases ?? [];
+
+        // Try to get size info from the running VM
+        if ($app->vm_ip && $app->vm_state === 'running' && ! empty($databases)) {
+            foreach ($databases as &$db) {
+                try {
+                    $output = $vmManager->execInVM($app->vm_ip, 'stat -c%s ' . escapeshellarg('/app/' . $db['path']) . ' 2>/dev/null || echo 0');
+                    $db['size'] = (int) trim($output);
+                } catch (\Throwable) {
+                    $db['size'] = null;
+                }
+            }
+            unset($db);
+        }
+
+        return response()->json(['databases' => $databases]);
+    }
+
+    /**
+     * Update SQLite databases config
+     *
+     * Update the SQLite database configuration for the app. If backup_enabled is true, persistent is forced to true.
+     */
+    public function databasesUpdate(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('update', $app);
+
+        $validated = $request->validate([
+            'databases' => ['required', 'array'],
+            'databases.*.path' => ['required', 'string', 'max:500'],
+            'databases.*.persistent' => ['required', 'boolean'],
+            'databases.*.backup_enabled' => ['required', 'boolean'],
+        ]);
+
+        $databases = $validated['databases'];
+
+        // If backup_enabled, force persistent
+        foreach ($databases as &$db) {
+            if ($db['backup_enabled']) {
+                $db['persistent'] = true;
+            }
+        }
+        unset($db);
+
+        $app->update(['sqlite_databases' => $databases]);
+
+        // Sync persistent_paths
+        $persistentPaths = $app->persistent_paths ?? [];
+        foreach ($databases as $db) {
+            if ($db['persistent'] && ! in_array($db['path'], $persistentPaths, true)) {
+                $persistentPaths[] = $db['path'];
+            }
+        }
+        $app->update(['persistent_paths' => $persistentPaths]);
+
+        return response()->json(['databases' => $app->fresh()->sqlite_databases]);
+    }
+
+    /**
+     * Download database backup
+     *
+     * Download a backup of a SQLite database from the app's VM. Streams the database file as a download.
+     *
+     * @response 200 scenario="Success" Binary SQLite database file download.
+     */
+    public function databaseBackup(Request $request, App $app, VMManagerClient $vmManager): StreamedResponse|JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $request->validate(['path' => ['required', 'string', 'max:500']]);
+
+        $path = $request->query('path');
+        $databases = $app->sqlite_databases ?? [];
+
+        // Verify path is in the configured databases
+        $found = false;
+        foreach ($databases as $db) {
+            if ($db['path'] === $path) {
+                $found = true;
+                break;
+            }
+        }
+
+        if (! $found) {
+            return response()->json(['message' => 'Database path not found in app config.'], 404);
+        }
+
+        if (! $app->vm_ip || $app->vm_state !== 'running') {
+            return response()->json(['message' => 'App is not running.'], 422);
+        }
+
+        // Copy the database to a temp file inside VM (to get a consistent snapshot),
+        // then cat it out through the exec endpoint
+        try {
+            $vmManager->execInVM($app->vm_ip, 'cp ' . escapeshellarg('/app/' . $path) . ' /tmp/db_backup.sqlite 2>&1');
+            $output = $vmManager->execInVM($app->vm_ip, 'base64 /tmp/db_backup.sqlite');
+            $vmManager->execInVM($app->vm_ip, 'rm -f /tmp/db_backup.sqlite');
+
+            $data = base64_decode($output);
+            $filename = basename($path);
+
+            return response()->streamDownload(function () use ($data) {
+                echo $data;
+            }, $filename, [
+                'Content-Type' => 'application/x-sqlite3',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Failed to backup database: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Restore database from backup
+     *
+     * Restore a SQLite database by uploading a backup file or triggering a Litestream restore.
+     */
+    public function databaseRestore(Request $request, App $app, VMManagerClient $vmManager): JsonResponse
+    {
+        Gate::authorize('update', $app);
+
+        $validated = $request->validate([
+            'path' => ['required', 'string', 'max:500'],
+            'timestamp' => ['nullable', 'string'],
+        ]);
+
+        $path = $validated['path'];
+        $databases = $app->sqlite_databases ?? [];
+
+        // Verify path is in the configured databases
+        $found = false;
+        foreach ($databases as $db) {
+            if ($db['path'] === $path) {
+                $found = true;
+                break;
+            }
+        }
+
+        if (! $found) {
+            return response()->json(['message' => 'Database path not found in app config.'], 404);
+        }
+
+        if (! $app->vm_ip || $app->vm_state !== 'running') {
+            return response()->json(['message' => 'App is not running.'], 422);
+        }
+
+        try {
+            $cmd = 'litestream restore -o ' . escapeshellarg('/app/' . $path);
+            if (! empty($validated['timestamp'])) {
+                $cmd .= ' -timestamp ' . escapeshellarg($validated['timestamp']);
+            }
+            $cmd .= ' ' . escapeshellarg('/app/' . $path);
+
+            $output = $vmManager->execInVM($app->vm_ip, $cmd . ' 2>&1', 60);
+
+            return response()->json([
+                'message' => 'Database restored successfully.',
+                'output' => $output,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Failed to restore database: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * @return array{slug: string, name: string, url: string, vm_state: string|null, vcpus: int, mem_mib: int, created_at: string, updated_at: string, vm_id: string|null, vm_ip: string|null, php_version: string|null, github_repo: string|null, github_branch: string|null, deployments: array|null, domains: array|null}
      */
     private function formatApp(App $app, bool $detailed = false): array
@@ -730,6 +919,7 @@ class AppController extends Controller
         ];
 
         if ($detailed) {
+            $data['sqlite_databases'] = $app->sqlite_databases ?? [];
             $data['vm_id'] = $app->vm_id;
             $data['vm_ip'] = $app->vm_ip;
             $data['php_version'] = $app->php_version;

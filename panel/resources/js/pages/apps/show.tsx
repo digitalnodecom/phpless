@@ -9,7 +9,7 @@ import AppLayout from '@/layouts/app-layout';
 import { type App, type BreadcrumbItem } from '@/types';
 import { Head, router } from '@inertiajs/react';
 import { toast } from 'sonner';
-import { ExternalLink, Pencil, RefreshCw, Terminal as TerminalIcon } from 'lucide-react';
+import { Database, ExternalLink, Pencil, RefreshCw, Terminal as TerminalIcon } from 'lucide-react';
 
 const OverviewTab = React.lazy(() => import('./tabs/overview-tab'));
 const AnalyticsTab = React.lazy(() => import('./tabs/analytics-tab'));
@@ -18,6 +18,7 @@ const DeploymentsTab = React.lazy(() => import('./tabs/deployments-tab'));
 const FilesTab = React.lazy(() => import('./tabs/files-tab'));
 const DomainsTab = React.lazy(() => import('./tabs/domains-tab'));
 const EnvironmentTab = React.lazy(() => import('./tabs/environment-tab'));
+const DatabaseTab = React.lazy(() => import('./tabs/database-tab'));
 const WorkersTab = React.lazy(() => import('./tabs/workers-tab'));
 const TerminalTab = React.lazy(() => import('./tabs/terminal-tab'));
 const SettingsTab = React.lazy(() => import('./tabs/settings-tab'));
@@ -237,6 +238,10 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                         <TabsTrigger value="files">Files</TabsTrigger>
                         <TabsTrigger value="domains">Domains</TabsTrigger>
                         <TabsTrigger value="environment">Environment</TabsTrigger>
+                        <TabsTrigger value="database">
+                            <Database className="mr-1 h-3 w-3" />
+                            Database
+                        </TabsTrigger>
                         <TabsTrigger value="workers">Workers</TabsTrigger>
                         <TabsTrigger value="terminal">
                             <TerminalIcon className="mr-1 h-3 w-3" />
@@ -284,6 +289,12 @@ export default function AppsShow({ app, serverIp }: { app: App; serverIp: string
                     <TabsContent value="environment" className="mt-4">
                         <Suspense fallback={<TabFallback />}>
                             <EnvironmentTab app={app} />
+                        </Suspense>
+                    </TabsContent>
+
+                    <TabsContent value="database" className="mt-4">
+                        <Suspense fallback={<TabFallback />}>
+                            <DatabaseTab app={app} />
                         </Suspense>
                     </TabsContent>
 
