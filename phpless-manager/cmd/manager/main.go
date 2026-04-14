@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/phpless/phpless-manager/internal/api"
+	"github.com/phpless/phpless-manager/internal/health"
 	"github.com/phpless/phpless-manager/internal/logs"
 	"github.com/phpless/phpless-manager/internal/network"
 	"github.com/phpless/phpless-manager/internal/sshproxy"
@@ -152,8 +153,13 @@ func main() {
 	portFwd := network.NewPortForwarder(extIface, *bridgeName)
 	log.WithField("interface", extIface).Info("Port forwarder initialized")
 
+	// Create health checker
+	webhookURL := *panelURL + "/api/v1/webhooks/health"
+	managerSecret := os.Getenv("PHPLESS_MANAGER_SECRET")
+	healthChecker := health.NewChecker(webhookURL, managerSecret)
+
 	// Create API server
-	server := api.NewServer(manager, termStore, logStore, sshSigner, portFwd)
+	server := api.NewServer(manager, termStore, logStore, sshSigner, portFwd, healthChecker)
 
 	// Remove old socket if it exists
 	os.Remove(*socketPath)

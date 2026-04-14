@@ -27,6 +27,23 @@ class FrameworkDetector
                 ];
             }
 
+            // Check for WordPress (wp-config.php is the strongest signal)
+            if (file_exists($buildPath . '/wp-config.php') || file_exists($buildPath . '/wp-config-sample.php')) {
+                $buildCommand = null;
+                if (file_exists($buildPath . '/composer.json')) {
+                    $wpComposer = @json_decode(file_get_contents($buildPath . '/composer.json'), true);
+                    if (is_array($wpComposer)) {
+                        $buildCommand = 'composer install --no-dev';
+                    }
+                }
+
+                return [
+                    'framework' => 'wordpress',
+                    'web_root' => '/',
+                    'build_command' => $buildCommand ?? '',
+                ];
+            }
+
             // Parse composer.json for framework detection
             $composerPath = $buildPath . '/composer.json';
             if (! file_exists($composerPath)) {
@@ -94,6 +111,15 @@ class FrameworkDetector
                     'framework' => 'yii2',
                     'web_root' => 'web',
                     'build_command' => 'composer install --no-dev --optimize-autoloader',
+                ];
+            }
+
+            // WordPress via Composer (johnpbloch/wordpress or roots/wordpress)
+            if (isset($require['wordpress/wordpress']) || isset($require['johnpbloch/wordpress']) || isset($require['roots/wordpress'])) {
+                return [
+                    'framework' => 'wordpress',
+                    'web_root' => '/',
+                    'build_command' => 'composer install --no-dev',
                 ];
             }
 

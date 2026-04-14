@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\App;
+use App\Models\PreviewEnvironment;
 use Illuminate\Support\Facades\Process;
 use RuntimeException;
 
@@ -66,6 +67,25 @@ class CaddyConfigManager
             foreach ($app->domains as $domain) {
                 $this->appendAppBlock($lines, $domain->domain, $app);
             }
+        }
+
+        // Preview environment blocks
+        $previews = PreviewEnvironment::whereNotNull('vm_ip')
+            ->where('vm_state', 'running')
+            ->get();
+
+        foreach ($previews as $preview) {
+            $lines[] = "{$preview->slug}.{$this->domain} {";
+            $lines[] = "\treverse_proxy {$preview->vm_ip}:8080";
+            $lines[] = "\tlog {";
+            $lines[] = "\t\toutput file {$this->logDir}/preview-{$preview->slug}.log {";
+            $lines[] = "\t\t\troll_size 10MiB";
+            $lines[] = "\t\t\troll_keep 1";
+            $lines[] = "\t\t}";
+            $lines[] = "\t\tformat json";
+            $lines[] = "\t}";
+            $lines[] = '}';
+            $lines[] = '';
         }
 
         // Catch-all for unknown subdomains (HTTP only — no wildcard cert)

@@ -287,6 +287,7 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/github/connect', [AppController::class, 'githubConnect'])->name('apps.github.connect');
     Route::post('apps/{app}/github/disconnect', [AppController::class, 'githubDisconnect'])->name('apps.github.disconnect');
     Route::post('apps/{app}/github/deploy', [AppController::class, 'githubDeploy'])->name('apps.github.deploy');
+    Route::delete('apps/{app}/previews/{preview}', [AppController::class, 'destroyPreview'])->name('apps.previews.destroy');
     Route::post('apps/{app}/terminal-session', [TerminalController::class, 'store'])->name('apps.terminal-session');
     Route::post('apps/{app}/databases/scan', [AppController::class, 'scanDatabases'])->name('apps.databases.scan');
     Route::put('apps/{app}/databases', [AppController::class, 'updateDatabases'])->name('apps.databases.update');
@@ -296,6 +297,8 @@ Route::middleware(['auth', EnsureHasTeam::class])->group(function () {
     Route::post('apps/{app}/log-session', [AppController::class, 'logSession'])->name('apps.log-session');
     Route::get('apps/{app}/analytics', [AppController::class, 'analytics'])->name('apps.analytics');
     Route::get('apps/{app}/logs', [AppController::class, 'logs'])->name('apps.logs');
+    Route::get('apps/{app}/logs/search', [AppController::class, 'logSearch'])->name('apps.logs.search');
+    Route::get('apps/{app}/logs/export', [AppController::class, 'logExport'])->name('apps.logs.export');
 
     // Custom domains
     Route::get('apps/{app}/domains', [DomainController::class, 'index'])->name('apps.domains.index');

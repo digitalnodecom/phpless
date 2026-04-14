@@ -197,6 +197,15 @@ class VMManagerClient
         ]);
     }
 
+    public function setHealthConfig(string $vmId, array $config): void
+    {
+        $response = $this->request()->post("/vms/{$vmId}/health-config", $config);
+
+        if ($response->failed()) {
+            throw new RuntimeException("Failed to set health config: {$response->body()}");
+        }
+    }
+
     public function getWorkerStatus(string $vmIp): array
     {
         $response = $this->request()->timeout(5)->get("/workers/status", ['vm_ip' => $vmIp]);

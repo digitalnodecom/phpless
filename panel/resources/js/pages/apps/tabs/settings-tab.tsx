@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { type App } from '@/types';
 import { router } from '@inertiajs/react';
-import { Activity, Clock, FolderOpen, Globe, Hammer, ChevronRight, Plus, RefreshCw, Server, Shield, Trash2, Zap } from 'lucide-react';
+import { Activity, Bell, Clock, Eye, FolderOpen, Globe, Hammer, HeartPulse, ChevronRight, Plus, RefreshCw, Server, Shield, Trash2, Zap } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -247,6 +247,148 @@ function PortForwardingCard({ app }: { app: App }) {
     );
 }
 
+function HealthCheckCard({ app }: { app: App }) {
+    const [enabled, setEnabled] = useState(app.health_check_enabled);
+    const [path, setPath] = useState(app.health_check_path || '/');
+    const [interval, setInterval] = useState(String(app.health_check_interval || 60));
+    const [alertEmail, setAlertEmail] = useState(app.alert_email || '');
+    const [alertWebhookUrl, setAlertWebhookUrl] = useState(app.alert_webhook_url || '');
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    const dirty =
+        enabled !== app.health_check_enabled ||
+        path !== (app.health_check_path || '/') ||
+        interval !== String(app.health_check_interval || 60) ||
+        alertEmail !== (app.alert_email || '') ||
+        alertWebhookUrl !== (app.alert_webhook_url || '');
+
+    const save = async () => {
+        setSaving(true);
+        setMsg(null);
+        try {
+            const res = await fetch(`/api/v1/apps/${app.slug}/health-settings`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${getCookie('XSRF-TOKEN')}`, 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') },
+                body: JSON.stringify({
+                    health_check_enabled: enabled,
+                    health_check_path: path,
+                    health_check_interval: parseInt(interval),
+                    alert_email: alertEmail || null,
+                    alert_webhook_url: alertWebhookUrl || null,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setMsg({ text: data.message || 'Health check settings saved.', type: 'success' });
+                router.reload({ only: ['app'] });
+            } else {
+                setMsg({ text: data.message || 'Failed to save.', type: 'error' });
+            }
+        } catch {
+            setMsg({ text: 'Failed to save health check settings.', type: 'error' });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                    <HeartPulse className="h-4 w-4" />
+                    Health Checks & Alerting
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {msg && (
+                    <div className={`rounded-lg border p-3 ${msg.type === 'success' ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+                        <p className="text-sm">{msg.text}</p>
+                    </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                    <Checkbox
+                        id="health-enabled"
+                        checked={enabled}
+                        onCheckedChange={(v) => setEnabled(v === true)}
+                    />
+                    <Label htmlFor="health-enabled" className="text-sm font-normal">
+                        Enable health check monitoring
+                    </Label>
+                </div>
+
+                {enabled && (
+                    <div className="space-y-4 pl-6">
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label htmlFor="health-path">Health check path</Label>
+                                <Input
+                                    id="health-path"
+                                    value={path}
+                                    onChange={(e) => setPath(e.target.value)}
+                                    placeholder="/"
+                                    className="max-w-xs font-mono text-sm"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="health-interval">Check interval</Label>
+                                <Select value={interval} onValueChange={setInterval}>
+                                    <SelectTrigger id="health-interval" className="max-w-[150px]">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="30">30 seconds</SelectItem>
+                                        <SelectItem value="60">60 seconds</SelectItem>
+                                        <SelectItem value="300">5 minutes</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="alert-email" className="flex items-center gap-1">
+                                <Bell className="h-3 w-3" />
+                                Alert email
+                            </Label>
+                            <Input
+                                id="alert-email"
+                                type="email"
+                                value={alertEmail}
+                                onChange={(e) => setAlertEmail(e.target.value)}
+                                placeholder="alerts@example.com"
+                                className="max-w-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="alert-webhook">Alert webhook URL</Label>
+                            <Input
+                                id="alert-webhook"
+                                type="url"
+                                value={alertWebhookUrl}
+                                onChange={(e) => setAlertWebhookUrl(e.target.value)}
+                                placeholder="https://hooks.slack.com/services/..."
+                                className="max-w-lg font-mono text-sm"
+                            />
+                        </div>
+                    </div>
+                )}
+
+                <p className="text-muted-foreground text-xs">
+                    Periodically checks your app's health endpoint. Sends alerts via email and/or webhook when your app goes down or recovers.
+                </p>
+
+                {dirty && (
+                    <Button onClick={save} disabled={saving} size="sm">
+                        {saving ? 'Saving...' : 'Save Health Settings'}
+                    </Button>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
 function DangerZoneCard({ app }: { app: App }) {
     const handleDelete = () => {
         router.delete(`/apps/${app.id}`);
@@ -306,6 +448,9 @@ export default function SettingsTab({ app }: { app: App }) {
     const [memMib, setMemMib] = useState(String(app.mem_mib));
     const [buildCommand, setBuildCommand] = useState(app.build_command || '');
     const [cronEnabled, setCronEnabled] = useState(app.cron_enabled);
+    const [previewEnabled, setPreviewEnabled] = useState(app.preview_enabled);
+    const [previewMax, setPreviewMax] = useState(app.preview_max || 3);
+    const [previewTtlHours, setPreviewTtlHours] = useState(app.preview_ttl_hours || 72);
     const [saving, setSaving] = useState(false);
     const [generatingKeys, setGeneratingKeys] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -317,6 +462,9 @@ export default function SettingsTab({ app }: { app: App }) {
         workerCount !== app.worker_count ||
         mercureEnabled !== app.mercure_enabled ||
         cronEnabled !== app.cron_enabled ||
+        previewEnabled !== app.preview_enabled ||
+        previewMax !== (app.preview_max || 3) ||
+        previewTtlHours !== (app.preview_ttl_hours || 72) ||
         buildCommand !== (app.build_command || '') ||
         webRoot !== (app.web_root || '/') ||
         vmSizeChanged;
@@ -356,6 +504,9 @@ export default function SettingsTab({ app }: { app: App }) {
                     mercure_enabled: mercureEnabled,
                     build_command: buildCommand || null,
                     cron_enabled: cronEnabled,
+                    preview_enabled: previewEnabled,
+                    preview_max: previewMax,
+                    preview_ttl_hours: previewTtlHours,
                     web_root: webRoot,
                     vcpus: parseInt(vcpus),
                     mem_mib: parseInt(memMib),
@@ -632,6 +783,63 @@ export default function SettingsTab({ app }: { app: App }) {
                     </p>
                 </CardContent>
             </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <Eye className="h-4 w-4" />
+                        Preview Environments
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                        <Checkbox
+                            id="preview-enabled"
+                            checked={previewEnabled}
+                            onCheckedChange={(v) => setPreviewEnabled(v === true)}
+                        />
+                        <Label htmlFor="preview-enabled" className="text-sm font-normal">
+                            Enable preview environments
+                        </Label>
+                    </div>
+
+                    {previewEnabled && (
+                        <div className="grid gap-4 pl-6 md:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label htmlFor="preview-max">Max previews</Label>
+                                <Input
+                                    id="preview-max"
+                                    type="number"
+                                    min={1}
+                                    max={10}
+                                    value={previewMax}
+                                    onChange={(e) => setPreviewMax(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                                    className="max-w-[100px]"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="preview-ttl">TTL (hours)</Label>
+                                <Input
+                                    id="preview-ttl"
+                                    type="number"
+                                    min={1}
+                                    max={720}
+                                    value={previewTtlHours}
+                                    onChange={(e) => setPreviewTtlHours(Math.max(1, Math.min(720, parseInt(e.target.value) || 72)))}
+                                    className="max-w-[100px]"
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    <p className="text-muted-foreground text-xs">
+                        When enabled, pushes to non-default branches will create temporary preview environments
+                        with their own URL and VM. Previews expire automatically after the configured TTL.
+                    </p>
+                </CardContent>
+            </Card>
+
+            <HealthCheckCard app={app} />
 
             <IpAllowlistCard app={app} />
 

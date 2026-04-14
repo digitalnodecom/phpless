@@ -150,6 +150,12 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("slug", mcp.Description("App slug (required when scope is 'app')")),
 	), handleSetEnv)
 
+	// get_app_status
+	s.AddTool(mcp.NewTool("get_app_status",
+		mcp.WithDescription("Get health status, uptime percentage, and last check time for an app"),
+		mcp.WithString("slug", mcp.Required(), mcp.Description("App slug")),
+	), handleGetAppStatus)
+
 	// ssh_exec
 	s.AddTool(mcp.NewTool("ssh_exec",
 		mcp.WithDescription("Execute a shell command inside an app's VM via SSH. Returns stdout, stderr, and exit code. Use for running artisan commands, checking PHP status, inspecting the filesystem, etc."),
@@ -262,6 +268,22 @@ func handleListApps(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResu
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	resp, err := client.ListApps()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(resp)
+}
+
+func handleGetAppStatus(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	slug, err := req.RequireString("slug")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := mcpClient()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	resp, err := client.GetUptime(slug)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

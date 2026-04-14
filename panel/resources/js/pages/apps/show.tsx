@@ -9,7 +9,7 @@ import AppLayout from '@/layouts/app-layout';
 import { type App, type BreadcrumbItem, type StorageEndpoint } from '@/types';
 import { Head, router } from '@inertiajs/react';
 import { toast } from 'sonner';
-import { Database, ExternalLink, Pencil, RefreshCw, Terminal as TerminalIcon } from 'lucide-react';
+import { Database, ExternalLink, GitBranch, Pencil, RefreshCw, Terminal as TerminalIcon } from 'lucide-react';
 
 const OverviewTab = React.lazy(() => import('./tabs/overview-tab'));
 const AnalyticsTab = React.lazy(() => import('./tabs/analytics-tab'));
@@ -20,6 +20,7 @@ const DomainsTab = React.lazy(() => import('./tabs/domains-tab'));
 const EnvironmentTab = React.lazy(() => import('./tabs/environment-tab'));
 const DatabaseTab = React.lazy(() => import('./tabs/database-tab'));
 const WorkersTab = React.lazy(() => import('./tabs/workers-tab'));
+const PreviewsTab = React.lazy(() => import('./tabs/previews-tab'));
 const TerminalTab = React.lazy(() => import('./tabs/terminal-tab'));
 const SettingsTab = React.lazy(() => import('./tabs/settings-tab'));
 
@@ -182,7 +183,13 @@ export default function AppsShow({ app, serverIp, storageEndpoints = [] }: { app
                             )}
                             <Badge variant={stateVariant(app.vm_state)}>{app.vm_state}</Badge>
                             {app.detected_framework && app.detected_framework !== 'vanilla' && (
-                                <Badge variant="outline" className="text-xs capitalize">{app.detected_framework}</Badge>
+                                <Badge
+                                    variant="outline"
+                                    className="text-xs capitalize"
+                                    style={app.detected_framework === 'wordpress' ? { borderColor: '#21759b', color: '#21759b' } : undefined}
+                                >
+                                    {app.detected_framework}
+                                </Badge>
                             )}
                         </div>
 
@@ -242,6 +249,10 @@ export default function AppsShow({ app, serverIp, storageEndpoints = [] }: { app
                             <Database className="mr-1 h-3 w-3" />
                             Database
                         </TabsTrigger>
+                        <TabsTrigger value="previews">
+                            <GitBranch className="mr-1 h-3 w-3" />
+                            Previews
+                        </TabsTrigger>
                         <TabsTrigger value="workers">Workers</TabsTrigger>
                         <TabsTrigger value="terminal">
                             <TerminalIcon className="mr-1 h-3 w-3" />
@@ -295,6 +306,12 @@ export default function AppsShow({ app, serverIp, storageEndpoints = [] }: { app
                     <TabsContent value="database" className="mt-4">
                         <Suspense fallback={<TabFallback />}>
                             <DatabaseTab app={app} storageEndpoints={storageEndpoints} />
+                        </Suspense>
+                    </TabsContent>
+
+                    <TabsContent value="previews" className="mt-4">
+                        <Suspense fallback={<TabFallback />}>
+                            <PreviewsTab app={app} />
                         </Suspense>
                     </TabsContent>
 

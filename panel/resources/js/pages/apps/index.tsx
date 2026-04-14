@@ -103,11 +103,25 @@ export default function AppsIndex({ apps, plan, planLabel }: { apps: App[]; plan
                                     <TableRow key={app.id}>
                                         <TableCell>
                                             <div className="flex items-center gap-2">
+                                                {app.health_check_enabled && (
+                                                    <span
+                                                        className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                                                            app.is_up === true ? 'bg-green-500' : app.is_up === false ? 'bg-red-500' : 'bg-gray-400'
+                                                        }`}
+                                                        title={app.is_up === true ? 'Up' : app.is_up === false ? 'Down' : 'Unknown'}
+                                                    />
+                                                )}
                                                 <Link href={`/apps/${app.id}`} className="font-medium hover:underline">
                                                     {app.name}
                                                 </Link>
                                                 {app.detected_framework && app.detected_framework !== 'vanilla' && (
-                                                    <Badge variant="outline" className="text-xs capitalize">{app.detected_framework}</Badge>
+                                                    <Badge
+                                                        variant="outline"
+                                                        className="text-xs capitalize"
+                                                        style={app.detected_framework === 'wordpress' ? { borderColor: '#21759b', color: '#21759b' } : undefined}
+                                                    >
+                                                        {app.detected_framework}
+                                                    </Badge>
                                                 )}
                                             </div>
                                         </TableCell>

@@ -26,6 +26,14 @@ func detectFramework(dir string) frameworkInfo {
 		return frameworkInfo{Name: "Laravel", WebRoot: "public"}
 	}
 
+	// Check for WordPress (wp-config.php)
+	if _, err := os.Stat(filepath.Join(dir, "wp-config.php")); err == nil {
+		return frameworkInfo{Name: "WordPress", WebRoot: "/"}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wp-config-sample.php")); err == nil {
+		return frameworkInfo{Name: "WordPress", WebRoot: "/"}
+	}
+
 	// Parse composer.json
 	data, err := os.ReadFile(filepath.Join(dir, "composer.json"))
 	if err != nil {
@@ -56,6 +64,15 @@ func detectFramework(dir string) frameworkInfo {
 	}
 	if _, ok := composer.Require["yiisoft/yii2"]; ok {
 		return frameworkInfo{Name: "Yii2", WebRoot: "web"}
+	}
+	if _, ok := composer.Require["wordpress/wordpress"]; ok {
+		return frameworkInfo{Name: "WordPress", WebRoot: "/"}
+	}
+	if _, ok := composer.Require["johnpbloch/wordpress"]; ok {
+		return frameworkInfo{Name: "WordPress", WebRoot: "/"}
+	}
+	if _, ok := composer.Require["roots/wordpress"]; ok {
+		return frameworkInfo{Name: "WordPress", WebRoot: "/"}
 	}
 
 	return frameworkInfo{Name: "Vanilla PHP", WebRoot: "/"}
@@ -112,6 +129,9 @@ func newInitCmd() *cobra.Command {
 			ui.Success("Detected framework: %s", fw.Name)
 			if fw.WebRoot != "/" {
 				fmt.Printf("  Suggested web_root: %s\n", fw.WebRoot)
+			}
+			if fw.Name == "WordPress" {
+				fmt.Println("  SQLite will be auto-configured on deploy")
 			}
 
 			return nil

@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/phpless/phpless-manager/internal/deploy"
+	"github.com/phpless/phpless-manager/internal/health"
 	"github.com/phpless/phpless-manager/internal/logs"
 	"github.com/phpless/phpless-manager/internal/network"
 	"github.com/phpless/phpless-manager/internal/terminal"
@@ -27,24 +28,31 @@ import (
 
 // Server is the HTTP API server for managing VMs.
 type Server struct {
-	manager      *vm.Manager
-	termSessions *terminal.Store
-	logSessions  *logs.Store
-	sshSigner    ssh.Signer
-	portFwd      *network.PortForwarder
-	authSecret   string
+	manager       *vm.Manager
+	termSessions  *terminal.Store
+	logSessions   *logs.Store
+	sshSigner     ssh.Signer
+	portFwd       *network.PortForwarder
+	healthChecker *health.Checker
+	authSecret    string
 }
 
 // NewServer creates a new API server.
-func NewServer(manager *vm.Manager, termSessions *terminal.Store, logSessions *logs.Store, sshSigner ssh.Signer, portFwd *network.PortForwarder) *Server {
+func NewServer(manager *vm.Manager, termSessions *terminal.Store, logSessions *logs.Store, sshSigner ssh.Signer, portFwd *network.PortForwarder, healthChecker *health.Checker) *Server {
 	return &Server{
-		manager:      manager,
-		termSessions: termSessions,
-		logSessions:  logSessions,
-		sshSigner:    sshSigner,
-		portFwd:      portFwd,
-		authSecret:   os.Getenv("PHPLESS_MANAGER_SECRET"),
+		manager:       manager,
+		termSessions:  termSessions,
+		logSessions:   logSessions,
+		sshSigner:     sshSigner,
+		portFwd:       portFwd,
+		healthChecker: healthChecker,
+		authSecret:    os.Getenv("PHPLESS_MANAGER_SECRET"),
 	}
+}
+
+// HealthChecker returns the health checker instance for external use.
+func (s *Server) HealthChecker() *health.Checker {
+	return s.healthChecker
 }
 
 // sharedSecretAuth is middleware that validates the X-Manager-Secret header.
@@ -78,6 +86,9 @@ func (s *Server) Router() *chi.Mux {
 			r.Post("/{id}/deploy", s.deployCode)
 			r.Get("/{id}/logs", s.getVMLogs)
 		})
+
+		r.Get("/vms/{id}/health", s.getVMHealth)
+		r.Post("/vms/{id}/health-config", s.setVMHealthConfig)
 
 		r.Get("/upstreams/{slug}", s.getUpstream)
 		r.Get("/health", s.health)
@@ -677,6 +688,73 @@ func (s *Server) proxyWorkerLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	body, _ := io.ReadAll(resp.Body)
 	w.Write(body)
+}
+
+// --- Health Check Handlers ---
+
+func (s *Server) getVMHealth(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	v, err := s.manager.Get(id)
+	if err != nil {
+		httpError(w, http.StatusNotFound, "VM not found: %s", id)
+		return
+	}
+
+	status, ok := s.healthChecker.Status(v.Config.Slug)
+	if !ok {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"slug":    v.Config.Slug,
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"slug":    v.Config.Slug,
+		"status":  status,
+	})
+}
+
+// HealthConfigRequest is the request body for configuring health checks.
+type HealthConfigRequest struct {
+	Enabled  bool   `json:"enabled"`
+	Path     string `json:"path"`
+	Interval int    `json:"interval"` // seconds
+}
+
+func (s *Server) setVMHealthConfig(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	v, err := s.manager.Get(id)
+	if err != nil {
+		httpError(w, http.StatusNotFound, "VM not found: %s", id)
+		return
+	}
+
+	var req HealthConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+
+	if req.Path == "" {
+		req.Path = "/"
+	}
+	if req.Interval < 10 {
+		req.Interval = 60
+	}
+
+	s.healthChecker.Register(health.VMHealthConfig{
+		Slug:     v.Config.Slug,
+		IP:       v.Config.IP,
+		Path:     req.Path,
+		Interval: time.Duration(req.Interval) * time.Second,
+		Enabled:  req.Enabled,
+	})
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "configured"})
 }
 
 // --- Helpers ---

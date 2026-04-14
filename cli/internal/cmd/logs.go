@@ -18,6 +18,11 @@ import (
 func newLogsCmd() *cobra.Command {
 	var appSlug string
 	var follow bool
+	var search string
+	var status string
+	var since string
+	var limit int
+	var offset int
 
 	cmd := &cobra.Command{
 		Use:   "logs",
@@ -35,6 +40,48 @@ func newLogsCmd() *cobra.Command {
 
 			if follow {
 				return streamLogs(slug)
+			}
+
+			// Use search API if any search filters are set
+			if search != "" || status != "" || since != "" {
+				resp, err := client.SearchLogs(slug, search, status, since, limit, offset)
+				if err != nil {
+					handleAPIError(err)
+					return nil
+				}
+
+				if ui.JSONMode {
+					enc := json.NewEncoder(os.Stdout)
+					enc.SetIndent("", "  ")
+					return enc.Encode(resp)
+				}
+
+				if len(resp.Logs) == 0 {
+					ui.Info("No logs found matching filters for '%s'.", slug)
+					return nil
+				}
+
+				rows := make([][]string, len(resp.Logs))
+				for i, log := range resp.Logs {
+					rows[i] = []string{
+						log.LoggedAt,
+						log.Method,
+						log.Path,
+						fmt.Sprintf("%d", log.StatusCode),
+						fmt.Sprintf("%dms", log.DurationMs),
+						log.IP,
+					}
+				}
+				ui.Table([]string{"TIME", "METHOD", "PATH", "STATUS", "DURATION", "IP"}, rows)
+
+				if resp.Total > 0 {
+					ui.Info("Showing %d-%d of %d results (page %d/%d)",
+						(resp.Page-1)*resp.PerPage+1,
+						min((resp.Page)*resp.PerPage, resp.Total),
+						resp.Total, resp.Page, resp.LastPage)
+				}
+
+				return nil
 			}
 
 			resp, err := client.GetLogs(slug)
@@ -73,6 +120,11 @@ func newLogsCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&appSlug, "app", "", "App slug")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream logs in real time")
+	cmd.Flags().StringVarP(&search, "search", "s", "", "Search path text")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status code (e.g., 500, 5xx)")
+	cmd.Flags().StringVar(&since, "since", "", "Time range (e.g., 1h, 24h, 7d)")
+	cmd.Flags().IntVar(&limit, "limit", 50, "Results per page")
+	cmd.Flags().IntVar(&offset, "offset", 0, "Page offset (page number)")
 
 	return cmd
 }
@@ -195,4 +247,11 @@ func formatCaddyLog(line string) string {
 	}
 
 	return fmt.Sprintf("%d %s %s %.1fms %dB %s", status, method, path, duration, size, clientIP)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

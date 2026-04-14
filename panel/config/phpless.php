@@ -23,6 +23,7 @@ return [
             'max_mem_mib' => 128,
             'max_vcpus' => 1,
             'custom_domains' => false,
+            'log_retention_days' => 7,
             'price' => 0,
         ],
         'developer' => [
@@ -31,6 +32,7 @@ return [
             'max_mem_mib' => 256,
             'max_vcpus' => 1,
             'custom_domains' => true,
+            'log_retention_days' => 30,
             'price' => 1000, // cents
         ],
         'team' => [
@@ -39,6 +41,7 @@ return [
             'max_mem_mib' => 512,
             'max_vcpus' => 2,
             'custom_domains' => true,
+            'log_retention_days' => 90,
             'price' => 2500,
         ],
         'business' => [
@@ -48,6 +51,7 @@ return [
             'max_vcpus' => 2,
             'custom_domains' => true,
             'priority_support' => true,
+            'log_retention_days' => 365,
             'price' => 10000,
         ],
     ],

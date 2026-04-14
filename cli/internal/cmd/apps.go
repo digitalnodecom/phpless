@@ -53,9 +53,19 @@ func newAppsListCmd() *cobra.Command {
 
 			rows := make([][]string, len(resp.Apps))
 			for i, app := range resp.Apps {
-				rows[i] = []string{app.Slug, app.VMState, app.URL}
+				health := ""
+				if app.HealthCheckEnabled {
+					if app.IsUp == nil {
+						health = "?"
+					} else if *app.IsUp {
+						health = "UP"
+					} else {
+						health = "DOWN"
+					}
+				}
+				rows[i] = []string{app.Slug, app.VMState, health, app.URL}
 			}
-			ui.Table([]string{"SLUG", "STATE", "URL"}, rows)
+			ui.Table([]string{"SLUG", "STATE", "HEALTH", "URL"}, rows)
 
 			return nil
 		},
@@ -67,6 +77,7 @@ func newAppsCreateCmd() *cobra.Command {
 	var vcpus int
 	var memMiB int
 	var cronEnabled bool
+	var previewEnabled bool
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -92,6 +103,9 @@ func newAppsCreateCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("cron") {
 				req.CronEnabled = &cronEnabled
+			}
+			if cmd.Flags().Changed("previews") {
+				req.PreviewEnabled = &previewEnabled
 			}
 
 			spin := ui.NewSpinner("Creating app...")
@@ -122,6 +136,7 @@ func newAppsCreateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&vcpus, "vcpus", 0, "Number of vCPUs (1 or 2)")
 	cmd.Flags().IntVar(&memMiB, "mem", 0, "Memory in MiB (128, 256, 512, 1024)")
 	cmd.Flags().BoolVar(&cronEnabled, "cron", false, "Enable Laravel scheduler (cron)")
+	cmd.Flags().BoolVar(&previewEnabled, "previews", false, "Enable preview environments")
 
 	return cmd
 }

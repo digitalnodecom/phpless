@@ -106,6 +106,20 @@ class AppLifecycleService
             } catch (\Throwable) {}
         }
 
+        // Clean up preview environment VMs
+        foreach ($app->previewEnvironments as $preview) {
+            if ($preview->vm_id) {
+                try {
+                    $this->vmManager->destroyVM($preview->vm_id);
+                } catch (\Throwable) {}
+            }
+
+            $previewBuildDir = base_path("../builds/previews/{$preview->slug}");
+            if (File::isDirectory($previewBuildDir)) {
+                File::deleteDirectory($previewBuildDir);
+            }
+        }
+
         // Clean up the build directory
         $buildDir = base_path("../builds/{$app->slug}");
         if (File::isDirectory($buildDir)) {

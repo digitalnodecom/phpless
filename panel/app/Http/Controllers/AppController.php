@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\GitDeployJob;
 use App\Models\App;
+use App\Models\AppLog;
 use App\Models\Deployment;
 use App\Services\AppLifecycleService;
 use App\Services\CaddyConfigManager;
@@ -12,6 +13,7 @@ use App\Services\EnvironmentVariableService;
 use App\Services\FrameworkDetector;
 use App\Services\SqliteDetector;
 use App\Services\VMManagerClient;
+use App\Services\WordPressSqliteConfigurator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -21,6 +23,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AppController extends Controller
 {
@@ -49,6 +52,8 @@ class AppController extends Controller
 
         $appsWithDisk = $apps->map(function (App $app) use ($statsByVmId) {
             $stats = $statsByVmId[$app->vm_id] ?? ['disk_used' => null, 'disk_total' => null, 'mem_used' => null, 'cpu_pct' => null];
+            $lastCheck = $app->uptimeChecks()->orderByDesc('checked_at')->first();
+            $stats['is_up'] = $lastCheck?->is_up;
             return array_merge($app->toArray(), $stats);
         });
 
@@ -126,7 +131,7 @@ class AppController extends Controller
         return Inertia::render('apps/show', [
             'app' => $app->load(['deployments' => function ($q) {
                 $q->with('triggeredBy:id,name')->latest()->limit(10);
-            }, 'domains']),
+            }, 'domains', 'previewEnvironments']),
             'serverIp' => config('phpless.server_ip'),
             'storageEndpoints' => $app->team->storageEndpoints()->get(),
         ]);
@@ -401,8 +406,28 @@ class AppController extends Controller
             $app->update(['build_command' => $detected['build_command']]);
         }
 
+        // WordPress SQLite auto-configuration
+        $wpConfigActions = [];
+        if ($detected['framework'] === 'wordpress') {
+            $wpConfigActions = WordPressSqliteConfigurator::configure($buildDir);
+
+            $persistentPaths = $app->persistent_paths ?? [];
+            foreach (['wp-content/database/', 'wp-content/uploads/'] as $wpPath) {
+                if (! in_array($wpPath, $persistentPaths, true)) {
+                    $persistentPaths[] = $wpPath;
+                }
+            }
+            $app->update(['persistent_paths' => $persistentPaths]);
+        }
+
         // Detect SQLite databases and auto-persist them
         $detectedDbs = SqliteDetector::detect($buildDir, $app);
+        if ($detected['framework'] === 'wordpress') {
+            $wpDbPath = 'wp-content/database/.ht.sqlite';
+            if (! in_array($wpDbPath, $detectedDbs, true)) {
+                $detectedDbs[] = $wpDbPath;
+            }
+        }
         if (! empty($detectedDbs)) {
             $merged = SqliteDetector::mergeDetections($app->sqlite_databases ?? [], $detectedDbs);
             $app->update(['sqlite_databases' => $merged]);
@@ -480,6 +505,11 @@ class AppController extends Controller
             // Snapshot build into versioned directory
             $versionedPath = $this->snapshotBuild($app, $buildDir);
 
+            $deployLog = null;
+            if (! empty($wpConfigActions)) {
+                $deployLog = 'WordPress SQLite configured: ' . implode(', ', $wpConfigActions);
+            }
+
             $app->deployments()->create([
                 'triggered_by' => auth()->id(),
                 'status' => 'succeeded',
@@ -487,6 +517,7 @@ class AppController extends Controller
                 'source' => 'web',
                 'build_output' => $buildOutput,
                 'build_path' => $versionedPath,
+                'log' => $deployLog,
                 'started_at' => now(),
                 'completed_at' => now(),
             ]);
@@ -654,6 +685,9 @@ class AppController extends Controller
             'web_root' => 'nullable|string|max:100',
             'build_command' => 'nullable|string|max:1000',
             'cron_enabled' => 'boolean',
+            'preview_enabled' => 'boolean',
+            'preview_max' => 'integer|min:1|max:10',
+            'preview_ttl_hours' => 'integer|min:1|max:720',
         ]);
 
         try {
@@ -945,6 +979,138 @@ class AppController extends Controller
         return response()->json(['logs' => $lines, 'console_logs' => $consoleLogs]);
     }
 
+    public function logSearch(Request $request, App $app): JsonResponse
+    {
+        Gate::authorize('view', $app);
+
+        $validated = $request->validate([
+            'q' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'status' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'method' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'from' => ['sometimes', 'nullable', 'date'],
+            'to' => ['sometimes', 'nullable', 'date'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        $perPage = $validated['per_page'] ?? 50;
+
+        $query = AppLog::where('app_id', $app->id)->orderByDesc('logged_at');
+
+        if (! empty($validated['q'])) {
+            $query->where('path', 'like', '%' . $validated['q'] . '%');
+        }
+
+        if (! empty($validated['status'])) {
+            $status = $validated['status'];
+            if (preg_match('/^(\d)xx$/i', $status, $m)) {
+                $base = (int) $m[1] * 100;
+                $query->whereBetween('status_code', [$base, $base + 99]);
+            } else {
+                $query->where('status_code', (int) $status);
+            }
+        }
+
+        if (! empty($validated['method'])) {
+            $query->where('method', strtoupper($validated['method']));
+        }
+
+        if (! empty($validated['from'])) {
+            $query->where('logged_at', '>=', $validated['from']);
+        }
+
+        if (! empty($validated['to'])) {
+            $query->where('logged_at', '<=', $validated['to']);
+        }
+
+        $paginator = $query->paginate($perPage);
+
+        $plan = $app->team->plan ?? 'sandbox';
+        $retentionDays = config("phpless.plans.{$plan}.log_retention_days", 7);
+
+        return response()->json([
+            'logs' => collect($paginator->items())->map(fn (AppLog $log) => [
+                'id' => $log->id,
+                'logged_at' => $log->logged_at->toIso8601String(),
+                'method' => $log->method,
+                'path' => $log->path,
+                'status_code' => $log->status_code,
+                'duration_ms' => $log->duration_ms,
+                'ip' => $log->ip,
+                'user_agent' => $log->user_agent,
+                'response_size' => $log->response_size,
+            ]),
+            'total' => $paginator->total(),
+            'page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'last_page' => $paginator->lastPage(),
+            'retention_days' => $retentionDays,
+        ]);
+    }
+
+    public function logExport(Request $request, App $app): StreamedResponse
+    {
+        Gate::authorize('view', $app);
+
+        $validated = $request->validate([
+            'q' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'status' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'method' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'from' => ['sometimes', 'nullable', 'date'],
+            'to' => ['sometimes', 'nullable', 'date'],
+        ]);
+
+        $query = AppLog::where('app_id', $app->id)->orderByDesc('logged_at');
+
+        if (! empty($validated['q'])) {
+            $query->where('path', 'like', '%' . $validated['q'] . '%');
+        }
+
+        if (! empty($validated['status'])) {
+            $status = $validated['status'];
+            if (preg_match('/^(\d)xx$/i', $status, $m)) {
+                $base = (int) $m[1] * 100;
+                $query->whereBetween('status_code', [$base, $base + 99]);
+            } else {
+                $query->where('status_code', (int) $status);
+            }
+        }
+
+        if (! empty($validated['method'])) {
+            $query->where('method', strtoupper($validated['method']));
+        }
+
+        if (! empty($validated['from'])) {
+            $query->where('logged_at', '>=', $validated['from']);
+        }
+
+        if (! empty($validated['to'])) {
+            $query->where('logged_at', '<=', $validated['to']);
+        }
+
+        return response()->streamDownload(function () use ($query) {
+            $handle = fopen('php://output', 'w');
+            fputcsv($handle, ['Timestamp', 'Method', 'Path', 'Status', 'Duration (ms)', 'IP', 'User Agent', 'Size']);
+
+            $query->chunk(500, function ($logs) use ($handle) {
+                foreach ($logs as $log) {
+                    fputcsv($handle, [
+                        $log->logged_at->toIso8601String(),
+                        $log->method,
+                        $log->path,
+                        $log->status_code,
+                        $log->duration_ms,
+                        $log->ip,
+                        $log->user_agent,
+                        $log->response_size,
+                    ]);
+                }
+            });
+
+            fclose($handle);
+        }, "{$app->slug}-logs.csv", ['Content-Type' => 'text/csv']);
+    }
+
     public function logSession(App $app, VMManagerClient $vmManager): JsonResponse
     {
         Gate::authorize('view', $app);
@@ -1008,6 +1174,32 @@ class AppController extends Controller
         GitDeployJob::dispatch($app);
 
         return response()->json(['message' => 'Deploy from GitHub queued.']);
+    }
+
+    public function destroyPreview(App $app, int $preview, VMManagerClient $vmManager, CaddyConfigManager $caddy): JsonResponse
+    {
+        Gate::authorize('update', $app);
+
+        $previewEnv = $app->previewEnvironments()->findOrFail($preview);
+
+        if ($previewEnv->vm_id) {
+            try {
+                $vmManager->destroyVM($previewEnv->vm_id);
+            } catch (\Throwable) {}
+        }
+
+        $buildDir = base_path("../builds/previews/{$previewEnv->slug}");
+        if (\Illuminate\Support\Facades\File::isDirectory($buildDir)) {
+            \Illuminate\Support\Facades\File::deleteDirectory($buildDir);
+        }
+
+        $previewEnv->delete();
+
+        try {
+            $caddy->regenerateAndReload();
+        } catch (\Throwable) {}
+
+        return response()->json(['message' => 'Preview environment destroyed.']);
     }
 
     public function scanDatabases(App $app, VMManagerClient $vmManager): JsonResponse

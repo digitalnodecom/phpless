@@ -166,14 +166,38 @@ func (c *Client) GetTeam() (*TeamResponse, error) {
 // --- Apps ---
 
 type AppSummary struct {
-	Slug      string `json:"slug"`
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	VMState   string `json:"vm_state"`
-	VCPUs     int    `json:"vcpus"`
-	MemMiB    int    `json:"mem_mib"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Slug               string `json:"slug"`
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	VMState            string `json:"vm_state"`
+	VCPUs              int    `json:"vcpus"`
+	MemMiB             int    `json:"mem_mib"`
+	HealthCheckEnabled bool   `json:"health_check_enabled"`
+	IsUp               *bool  `json:"is_up"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+}
+
+// UptimeResponse is the response for the uptime endpoint.
+type UptimeResponse struct {
+	HealthCheckEnabled bool    `json:"health_check_enabled"`
+	IsUp               *bool   `json:"is_up"`
+	Uptime24h          *float64 `json:"uptime_24h"`
+	Uptime7d           *float64 `json:"uptime_7d"`
+	Uptime30d          *float64 `json:"uptime_30d"`
+	AvgResponseTime24h *int64   `json:"avg_response_time_24h"`
+	LastCheck          *struct {
+		StatusCode     int    `json:"status_code"`
+		ResponseTimeMs int64  `json:"response_time_ms"`
+		IsUp           bool   `json:"is_up"`
+		CheckedAt      string `json:"checked_at"`
+	} `json:"last_check"`
+}
+
+func (c *Client) GetUptime(slug string) (*UptimeResponse, error) {
+	var resp UptimeResponse
+	err := c.do("GET", "/apps/"+slug+"/uptime", nil, &resp)
+	return &resp, err
 }
 
 type AppsResponse struct {
@@ -233,11 +257,12 @@ func (c *Client) GetApp(slug string) (*AppDetailResponse, error) {
 }
 
 type CreateAppRequest struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug,omitempty"`
-	VCPUs       int    `json:"vcpus,omitempty"`
-	MemMiB      int    `json:"mem_mib,omitempty"`
-	CronEnabled *bool  `json:"cron_enabled,omitempty"`
+	Name           string `json:"name"`
+	Slug           string `json:"slug,omitempty"`
+	VCPUs          int    `json:"vcpus,omitempty"`
+	MemMiB         int    `json:"mem_mib,omitempty"`
+	CronEnabled    *bool  `json:"cron_enabled,omitempty"`
+	PreviewEnabled *bool  `json:"preview_enabled,omitempty"`
 }
 
 type CreateAppResponse struct {
@@ -434,6 +459,74 @@ func (c *Client) GetLogs(slug string) (*LogsResponse, error) {
 	var resp LogsResponse
 	err := c.do("GET", "/apps/"+slug+"/logs", nil, &resp)
 	return &resp, err
+}
+
+type SearchLogEntry struct {
+	ID           int    `json:"id"`
+	LoggedAt     string `json:"logged_at"`
+	Method       string `json:"method"`
+	Path         string `json:"path"`
+	StatusCode   int    `json:"status_code"`
+	DurationMs   int    `json:"duration_ms"`
+	IP           string `json:"ip"`
+	UserAgent    string `json:"user_agent"`
+	ResponseSize int    `json:"response_size"`
+}
+
+type SearchLogsResponse struct {
+	Logs          []SearchLogEntry `json:"logs"`
+	Total         int              `json:"total"`
+	Page          int              `json:"page"`
+	PerPage       int              `json:"per_page"`
+	LastPage      int              `json:"last_page"`
+	RetentionDays int              `json:"retention_days"`
+}
+
+func (c *Client) SearchLogs(slug, query, status, since string, limit, offset int) (*SearchLogsResponse, error) {
+	params := fmt.Sprintf("per_page=%d", limit)
+	if offset > 0 {
+		params += fmt.Sprintf("&page=%d", offset)
+	}
+	if query != "" {
+		params += "&q=" + query
+	}
+	if status != "" {
+		params += "&status=" + status
+	}
+	if since != "" {
+		params += "&from=" + parseSinceToISO(since)
+	}
+
+	var resp SearchLogsResponse
+	err := c.do("GET", "/apps/"+slug+"/logs/search?"+params, nil, &resp)
+	return &resp, err
+}
+
+// parseSinceToISO converts relative durations like "1h", "24h", "7d" to an ISO timestamp.
+func parseSinceToISO(since string) string {
+	now := time.Now()
+	if len(since) < 2 {
+		return since
+	}
+	unit := since[len(since)-1]
+	valStr := since[:len(since)-1]
+	val := 0
+	for _, c := range valStr {
+		if c >= '0' && c <= '9' {
+			val = val*10 + int(c-'0')
+		}
+	}
+	switch unit {
+	case 'h':
+		now = now.Add(-time.Duration(val) * time.Hour)
+	case 'd':
+		now = now.AddDate(0, 0, -val)
+	case 'm':
+		now = now.Add(-time.Duration(val) * time.Minute)
+	default:
+		return since
+	}
+	return now.Format(time.RFC3339)
 }
 
 type LogStreamSessionResponse struct {
@@ -732,5 +825,36 @@ func (c *Client) SetTeamEnv(vars map[string]string) (*MessageResponse, error) {
 func (c *Client) DeleteTeamEnv(key string) (*MessageResponse, error) {
 	var resp MessageResponse
 	err := c.do("DELETE", "/team/env/"+key, nil, &resp)
+	return &resp, err
+}
+
+// --- Previews ---
+
+type PreviewEnvironment struct {
+	ID            int    `json:"id"`
+	Branch        string `json:"branch"`
+	Slug          string `json:"slug"`
+	URL           string `json:"url"`
+	VMState       string `json:"vm_state"`
+	CommitSHA     string `json:"commit_sha"`
+	CommitMessage string `json:"commit_message"`
+	CommitAuthor  string `json:"commit_author"`
+	CreatedAt     string `json:"created_at"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
+type PreviewsResponse struct {
+	Previews []PreviewEnvironment `json:"previews"`
+}
+
+func (c *Client) ListPreviews(appSlug string) (*PreviewsResponse, error) {
+	var resp PreviewsResponse
+	err := c.do("GET", "/apps/"+appSlug+"/previews", nil, &resp)
+	return &resp, err
+}
+
+func (c *Client) DestroyPreview(appSlug string, previewID int) (*MessageResponse, error) {
+	var resp MessageResponse
+	err := c.do("DELETE", fmt.Sprintf("/apps/%s/previews/%d", appSlug, previewID), nil, &resp)
 	return &resp, err
 }

@@ -110,8 +110,54 @@ export interface App {
     disk_total: number | null;
     mem_used: number | null;
     cpu_pct: number | null;
+    preview_enabled: boolean;
+    preview_max: number;
+    preview_ttl_hours: number;
+    health_check_enabled: boolean;
+    health_check_path: string;
+    health_check_interval: number;
+    alert_email: string | null;
+    alert_webhook_url: string | null;
+    is_up: boolean | null;
     deployments?: Deployment[];
     domains?: Domain[];
+    preview_environments?: PreviewEnvironment[];
+}
+
+export interface UptimeStats {
+    health_check_enabled: boolean;
+    is_up: boolean | null;
+    last_check: {
+        status_code: number;
+        response_time_ms: number;
+        is_up: boolean;
+        checked_at: string;
+    } | null;
+    uptime_24h: number | null;
+    uptime_7d: number | null;
+    uptime_30d: number | null;
+    avg_response_time_24h: number | null;
+    avg_response_time_7d: number | null;
+    recent_checks: {
+        status_code: number;
+        response_time_ms: number;
+        is_up: boolean;
+        checked_at: string;
+    }[];
+}
+
+export interface PreviewEnvironment {
+    id: number;
+    app_id: number;
+    branch: string;
+    slug: string;
+    vm_state: string;
+    commit_sha: string | null;
+    commit_message: string | null;
+    commit_author: string | null;
+    created_at: string;
+    updated_at: string;
+    expires_at: string | null;
 }
 
 export interface SqliteDatabase {

@@ -16,6 +16,9 @@ Route::post('v1/auth/token', [AuthController::class, 'token']);
 // Public: GitHub webhook (verified by signature, not auth token)
 Route::post('v1/webhooks/github/{app:slug}', [WebhookController::class, 'github']);
 
+// Public: Health check webhook (verified by manager secret)
+Route::post('v1/webhooks/health', [WebhookController::class, 'health']);
+
 // Authenticated API routes
 Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(function () {
     // User & Team — general reads
@@ -30,9 +33,18 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
         Route::get('apps/{app:slug}', [AppController::class, 'show']);
         Route::get('apps/{app:slug}/download', [AppController::class, 'download']);
         Route::get('apps/{app:slug}/logs', [AppController::class, 'logs']);
+        Route::get('apps/{app:slug}/logs/search', [AppController::class, 'logSearch']);
+        Route::get('apps/{app:slug}/logs/export', [AppController::class, 'logExport']);
         Route::get('apps/{app:slug}/files', [AppController::class, 'files']);
         Route::get('apps/{app:slug}/files/download', [AppController::class, 'filesDownload']);
         Route::get('apps/{app:slug}/env', [EnvController::class, 'index']);
+        Route::get('apps/{app:slug}/uptime', [AppController::class, 'uptime']);
+        Route::get('apps/{app:slug}/previews', [AppController::class, 'previews']);
+    });
+
+    // Health check settings — 30/hour
+    Route::middleware('throttle:api-env-mutate')->group(function () {
+        Route::put('apps/{app:slug}/health-settings', [AppController::class, 'updateHealthSettings']);
     });
 
     // Database management — read
@@ -77,6 +89,11 @@ Route::middleware(['auth:sanctum', EnsureApiTeam::class])->prefix('v1')->group(f
         Route::post('team/storage-endpoints', [StorageEndpointController::class, 'store']);
         Route::put('team/storage-endpoints/{endpoint}', [StorageEndpointController::class, 'update']);
         Route::delete('team/storage-endpoints/{endpoint}', [StorageEndpointController::class, 'destroy']);
+    });
+
+    // Preview environment management
+    Route::middleware('throttle:api-deploy')->group(function () {
+        Route::delete('apps/{app:slug}/previews/{preview}', [AppController::class, 'destroyPreview']);
     });
 
     // App delete — general reads limiter (infrequent operation)

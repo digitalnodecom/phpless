@@ -32,6 +32,15 @@ class App extends Model
         'cron_enabled',
         'cron_schedule',
         'storage_endpoint_id',
+        'last_log_ingested_at',
+        'preview_enabled',
+        'preview_max',
+        'preview_ttl_hours',
+        'health_check_enabled',
+        'health_check_path',
+        'health_check_interval',
+        'alert_email',
+        'alert_webhook_url',
     ];
 
     protected function casts(): array
@@ -49,6 +58,12 @@ class App extends Model
             'ip_allowlist' => 'array',
             'cron_enabled' => 'boolean',
             'cron_schedule' => 'array',
+            'last_log_ingested_at' => 'datetime',
+            'preview_enabled' => 'boolean',
+            'preview_max' => 'integer',
+            'preview_ttl_hours' => 'integer',
+            'health_check_enabled' => 'boolean',
+            'health_check_interval' => 'integer',
         ];
     }
 
@@ -77,9 +92,24 @@ class App extends Model
         return $this->belongsTo(StorageEndpoint::class);
     }
 
+    public function previewEnvironments(): HasMany
+    {
+        return $this->hasMany(PreviewEnvironment::class);
+    }
+
+    public function uptimeChecks(): HasMany
+    {
+        return $this->hasMany(UptimeCheck::class);
+    }
+
     public function requestMetrics(): HasMany
     {
         return $this->hasMany(RequestMetric::class);
+    }
+
+    public function logs(): HasMany
+    {
+        return $this->hasMany(AppLog::class);
     }
 
     /**
